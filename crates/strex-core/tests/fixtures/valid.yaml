@@ -1,0 +1,6 @@
+name: "Example Collection"
+version: "1.0"
+requests:
+  - name: "Get users"
+    method: GET
+    url: "https://api.example.com/users"

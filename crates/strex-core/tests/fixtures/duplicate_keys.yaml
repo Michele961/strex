@@ -1,0 +1,7 @@
+name: "Duplicate Test"
+version: "1.0"
+requests:
+  - name: "req1"
+    method: GET
+    method: POST
+    url: "https://api.example.com"

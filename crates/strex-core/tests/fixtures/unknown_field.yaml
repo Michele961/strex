@@ -1,0 +1,6 @@
+name: "Unknown Field Test"
+version: "1.0"
+requests:
+  - name: "req1"
+    metod: GET
+    url: "https://api.example.com"

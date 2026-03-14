@@ -1,0 +1,6 @@
+name: "Anchor Test"
+version: "1.0"
+requests:
+  - name: "req1"
+    method: &anchor GET
+    url: "https://api.example.com"

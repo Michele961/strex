@@ -1,0 +1,11 @@
+name: "Body Test"
+version: "1.0"
+requests:
+  - name: "Create user"
+    method: POST
+    url: "https://api.example.com/users"
+    body:
+      type: json
+      content:
+        name: Alice
+        email: alice@example.com
