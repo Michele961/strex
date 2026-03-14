@@ -6,3 +6,12 @@ edition = "2021"
 [dependencies]
 # Typed error definitions for library crates (strex-core, strex-script)
 thiserror = "1"
+
+# Serde derive macros for data model structs
+serde = { version = "1", features = ["derive"] }
+
+# YAML deserialization — strict subset parsing; evaluate serde-yml migration post-MVP
+serde_yaml = "0.9"
+
+# Jaro-Winkler distance for "did you mean?" field name suggestions
+strsim = "0.11"
