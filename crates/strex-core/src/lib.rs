@@ -2,6 +2,7 @@
 
 mod collection;
 mod error;
+mod interpolation;
 mod parser;
 
 pub use collection::{Body, BodyType, Collection, Request};
