@@ -1,0 +1,10 @@
+# Rust build artifacts
+target/
+
+# Worktrees (local development isolation)
+.worktrees/
+
+# IDE
+.idea/
+.vscode/
+*.iml
