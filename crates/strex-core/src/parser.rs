@@ -154,29 +154,25 @@ fn extract_mapping_key(trimmed: &str) -> Option<String> {
     None
 }
 
-/// Recursively validates that no container node in `value` is reached at a depth greater
+/// Recursively validates that no node in `value` is reached at a depth greater
 /// than [`MAX_NESTING_DEPTH`].
 ///
-/// `depth` is 0 at the document root. Only mappings and sequences count as nesting
-/// levels — scalar leaves at any depth do not trigger the limit.
+/// `depth` is 0 at the document root. The guard fires for any value type —
+/// including scalar leaves — so a scalar at depth 21 inside a mapping at depth 20
+/// is correctly rejected.
 fn validate_max_depth(value: &serde_yaml::Value, depth: usize) -> Result<(), CollectionError> {
+    if depth > MAX_NESTING_DEPTH {
+        return Err(CollectionError::NestingTooDeep {
+            max: MAX_NESTING_DEPTH,
+        });
+    }
     match value {
         serde_yaml::Value::Mapping(m) => {
-            if depth > MAX_NESTING_DEPTH {
-                return Err(CollectionError::NestingTooDeep {
-                    max: MAX_NESTING_DEPTH,
-                });
-            }
             for (_, v) in m {
                 validate_max_depth(v, depth + 1)?;
             }
         }
         serde_yaml::Value::Sequence(s) => {
-            if depth > MAX_NESTING_DEPTH {
-                return Err(CollectionError::NestingTooDeep {
-                    max: MAX_NESTING_DEPTH,
-                });
-            }
             for v in s {
                 validate_max_depth(v, depth + 1)?;
             }
@@ -346,13 +342,14 @@ mod tests {
 
     #[test]
     fn value_at_exactly_max_depth_is_ok() {
-        // Build a chain of 20 nested mappings — depth check is > 20, so depth 20 is allowed
+        // 19 nested mappings (l0..l18): root mapping at depth 0, leaf scalar at depth 20.
+        // The guard is `depth > 20`, so depth 20 is allowed.
         let mut yaml = String::new();
-        for i in 0..20 {
+        for i in 0..19 {
             yaml.push_str(&"  ".repeat(i));
             yaml.push_str(&format!("l{i}:\n"));
         }
-        yaml.push_str(&"  ".repeat(20));
+        yaml.push_str(&"  ".repeat(19));
         yaml.push_str("leaf: value\n");
         let value: serde_yaml::Value = serde_yaml::from_str(&yaml).unwrap();
         assert!(validate_max_depth(&value, 0).is_ok());
@@ -360,13 +357,14 @@ mod tests {
 
     #[test]
     fn value_exceeding_max_depth_is_rejected() {
-        // 21 levels deep
+        // 20 nested mappings (l0..l19): deepest container at depth 20, scalar "value" at depth 21.
+        // Mirrors the nesting_too_deep.yaml fixture — the scalar leaf must be caught.
         let mut yaml = String::new();
-        for i in 0..21 {
+        for i in 0..20 {
             yaml.push_str(&"  ".repeat(i));
             yaml.push_str(&format!("l{i}:\n"));
         }
-        yaml.push_str(&"  ".repeat(21));
+        yaml.push_str(&"  ".repeat(20));
         yaml.push_str("leaf: value\n");
         let value: serde_yaml::Value = serde_yaml::from_str(&yaml).unwrap();
         let err = validate_max_depth(&value, 0).unwrap_err();
