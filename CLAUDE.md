@@ -27,7 +27,6 @@ Strex (stress + execution) is a CLI-first, Git-native API testing tool built in 
 - Do not add dependencies to `Cargo.toml` without a justification comment above the entry.
 - Do not implement features outside the MVP scope defined in [ADR-0001](docs/adr/0001-project-architecture-and-tech-stack.md).
 - Do not run scripts on Tokio async executor threads — use `spawn_blocking`. See [ADR-0004](docs/adr/0004-script-safety-model.md).
-- Do not use `unwrap()` or `expect()` in non-test code.
 - Do not add `anyhow` to `strex-core` or `strex-script`.
 - Do not use YAML anchors, aliases, or merge keys in collection files. See [ADR-0003](docs/adr/0003-strex-yaml-subset-definition.md).
 
