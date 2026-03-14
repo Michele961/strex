@@ -1,0 +1,5 @@
+name: "Missing Field Test"
+version: "1.0"
+requests:
+  - name: "req1"
+    method: GET

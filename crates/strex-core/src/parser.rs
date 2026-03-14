@@ -63,6 +63,11 @@ fn validate_file_size(raw: &str) -> Result<(), CollectionError> {
 /// Inline comments (`# text` after a value on the same line) and `&`/`*` characters
 /// inside quoted strings are not stripped before scanning. Avoid placing `&` or `*`
 /// characters in inline comments or unquoted glob patterns in collection files.
+///
+/// Lines within YAML block scalars (`|`, `>`) are not detected as scalar body
+/// content and may produce false-positive errors if the block content contains
+/// lines starting with `&` or `*` (e.g., `&copy; 2024` in a text body).
+/// Avoid `&` and `*` at the start of block-scalar content lines.
 fn scan_for_anchors_aliases(raw: &str) -> Result<(), CollectionError> {
     for line in raw.lines() {
         let trimmed = line.trim();

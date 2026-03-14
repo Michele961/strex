@@ -89,3 +89,13 @@ fn nesting_too_deep_yaml_returns_nesting_too_deep() {
         "expected NestingTooDeep, got: {err}"
     );
 }
+
+#[test]
+fn missing_field_yaml_returns_missing_field() {
+    let err = strex_core::parse_collection(&fixture("missing_field.yaml"))
+        .expect_err("missing_field.yaml must be rejected");
+    assert!(
+        matches!(err, CollectionError::MissingField { .. }),
+        "expected MissingField, got: {err}"
+    );
+}
