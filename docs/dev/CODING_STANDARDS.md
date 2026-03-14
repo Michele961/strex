@@ -2,7 +2,7 @@
 
 ## Formatting
 
-Use `rustfmt` with default settings. No manual formatting decisions. Run before every commit:
+Use `rustfmt` with default settings. No manual formatting decisions. Do not add a `rustfmt.toml` — the defaults are intentional. Run before every commit:
 
 ```bash
 cargo fmt --check   # verify (CI uses this)
@@ -11,7 +11,7 @@ cargo fmt           # fix
 
 ## Linting
 
-Clippy is mandatory and warnings are treated as errors. Add this to the top of each crate's `lib.rs` or `main.rs`:
+Clippy is mandatory and warnings are treated as errors. Do not add a `.clippy.toml` without team discussion. Add this to the top of each crate's `lib.rs` or `main.rs`:
 
 ```rust
 #![deny(clippy::all)]
@@ -125,9 +125,10 @@ All `pub` items must have a `///` doc comment. Include what the function does, w
 ///
 /// # Errors
 ///
-/// Returns [`CollectionError::YamlParseError`] if the file is not valid YAML.
-/// Returns [`CollectionError::SchemaValidation`] if required fields are missing or unknown fields are present.
-/// Returns [`CollectionError::AnchorsNotAllowed`] if the file uses YAML anchors or aliases.
+/// Returns [`CollectionError::CollectionValidation`] if required fields are missing,
+/// unknown fields are present, or forbidden YAML constructs (anchors, aliases) are used.
+/// Returns [`CollectionError::DnsResolution`] if the environment file references a
+/// hostname that cannot be resolved. See ADR-0002 for the complete error taxonomy.
 pub fn parse_collection(path: &Path) -> Result<Collection, CollectionError> {
     // ...
 }
@@ -142,7 +143,7 @@ Every new dependency added to `Cargo.toml` must include a comment explaining why
 ```toml
 [dependencies]
 # Async HTTP client — reqwest chosen over hyper for ergonomics; HTTP/1.1 only for MVP
-reqwest = { version = "0.11", features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
 
 # Typed error definitions for library crates (strex-core, strex-script)
 thiserror = "1"
@@ -174,11 +175,25 @@ pub async fn execute_script(
     });
 
     // Hard timeout enforced at Tokio level — 30s default
+    // .and_then flattens the nested Result<Result<_, ScriptError>, JoinError>
+    // before applying ?, so both error types are mapped to ScriptError first.
     tokio::time::timeout(Duration::from_secs(30), handle)
         .await
-        .map_err(|_| ScriptError::Timeout { limit_seconds: 30 })?
-        .map_err(|e| ScriptError::RuntimeError { message: e.to_string() })?
+        .map_err(|_| ScriptError::Timeout { limit_seconds: 30 })
+        .and_then(|r| r.map_err(|e| ScriptError::RuntimeError { message: e.to_string() }))?
 }
 ```
 
 See [ADR-0004](../adr/0004-script-safety-model.md) for the full worker thread architecture, memory limits, and sandboxed API design.
+
+## Unsafe Code
+
+Do not use `unsafe` without an explicit justification comment at the call site explaining why it is necessary and why it is sound:
+
+```rust
+// Safety: the buffer has been initialised by the OS and is guaranteed to be
+// at least `len` bytes — see the contract documented in write(2).
+let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
+```
+
+If you find yourself reaching for `unsafe`, stop and ask whether a safe abstraction already exists in the ecosystem. The bar for `unsafe` in this codebase is high.
