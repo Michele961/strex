@@ -57,6 +57,12 @@ fn validate_file_size(raw: &str) -> Result<(), CollectionError> {
 /// Splits each non-comment line on whitespace and checks whether any token
 /// starts with `&` or `*` followed by at least one character. This approach
 /// correctly ignores `*` that appears in the middle of a URL token.
+///
+/// # Limitations
+///
+/// Inline comments (`# text` after a value on the same line) and `&`/`*` characters
+/// inside quoted strings are not stripped before scanning. Avoid placing `&` or `*`
+/// characters in inline comments or unquoted glob patterns in collection files.
 fn scan_for_anchors_aliases(raw: &str) -> Result<(), CollectionError> {
     for line in raw.lines() {
         let trimmed = line.trim();
@@ -80,6 +86,13 @@ fn scan_for_anchors_aliases(raw: &str) -> Result<(), CollectionError> {
 /// Scans the raw YAML for duplicate mapping keys at the same indentation level.
 ///
 /// Uses an indent-based stack to track which keys have been seen at each level.
+///
+/// # Limitations
+///
+/// Block scalar content (lines following `|` or `>`) is not detected as scalar body
+/// and may produce false-positive duplicate-key errors if the block content contains
+/// repeated colon-containing lines at the same indentation. Current collection fields
+/// do not use multi-line block scalars in practice.
 fn scan_for_duplicate_keys(raw: &str) -> Result<(), CollectionError> {
     // Stack entries: (indent_level, keys_seen_at_this_level)
     let mut stack: Vec<(usize, Vec<String>)> = vec![(0, Vec::new())];
@@ -372,5 +385,37 @@ mod tests {
             err,
             crate::error::CollectionError::NestingTooDeep { .. }
         ));
+    }
+
+    // --- error enrichment helpers ---
+
+    #[test]
+    fn extract_unknown_field_returns_field_name() {
+        let msg = "unknown field `metod`, expected one of `name`, `method`, `url`";
+        assert_eq!(extract_unknown_field(msg), Some("metod".to_string()));
+    }
+
+    #[test]
+    fn extract_valid_fields_returns_all_fields() {
+        let msg = "unknown field `metod`, expected one of `name`, `method`, `url`";
+        assert_eq!(
+            extract_valid_fields(msg),
+            vec!["name".to_string(), "method".to_string(), "url".to_string()]
+        );
+    }
+
+    #[test]
+    fn find_closest_field_returns_suggestion_above_threshold() {
+        let valid = vec!["method".to_string(), "url".to_string()];
+        assert_eq!(
+            find_closest_field("metod", &valid),
+            Some("method".to_string())
+        );
+    }
+
+    #[test]
+    fn find_closest_field_returns_none_below_threshold() {
+        let valid = vec!["method".to_string(), "url".to_string()];
+        assert!(find_closest_field("zzz", &valid).is_none());
     }
 }
