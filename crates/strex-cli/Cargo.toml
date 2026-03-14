@@ -1,0 +1,16 @@
+[package]
+name = "strex-cli"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "strex"
+path = "src/main.rs"
+
+[dependencies]
+# Core library
+strex-core = { path = "../strex-core" }
+# Script runtime
+strex-script = { path = "../strex-script" }
+# Application-level error handling for the CLI binary
+anyhow = "1"

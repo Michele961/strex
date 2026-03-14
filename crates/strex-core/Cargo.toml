@@ -1,0 +1,8 @@
+[package]
+name = "strex-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Typed error definitions for library crates (strex-core, strex-script)
+thiserror = "1"

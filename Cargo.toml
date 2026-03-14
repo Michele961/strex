@@ -1,0 +1,7 @@
+[workspace]
+members = [
+    "crates/strex-core",
+    "crates/strex-script",
+    "crates/strex-cli",
+]
+resolver = "2"
