@@ -6,7 +6,7 @@ use std::time::Duration;
 use wiremock::matchers::{body_json, body_string, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-use strex_core::{execute_collection, RequestOutcome};
+use strex_core::{execute_collection, execute_collection_with_opts, RequestOutcome, RunnerOpts};
 use strex_core::{Body, BodyType, Collection, ExecutionContext, Request, RequestError};
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -438,4 +438,452 @@ async fn response_captured_on_assertion_failure() {
     let resp = result.request_results[0].response.as_ref().unwrap();
     assert_eq!(resp.status, 404);
     assert_eq!(resp.body, "not found");
+}
+
+// ── script integration tests ─────────────────────────────────────────────────
+
+#[tokio::test]
+async fn pre_script_sets_variable_used_in_url() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/users/99"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+
+    let base = server.uri();
+    let col = collection_with_vars(
+        HashMap::from([("base".to_string(), Some(base.clone()))]),
+        vec![Request {
+            name: "get-user".to_string(),
+            method: "GET".to_string(),
+            url: "{{base}}/users/{{dynamic_id}}".to_string(),
+            headers: HashMap::new(),
+            body: None,
+            pre_script: Some(r#"variables.set("dynamic_id", "99");"#.to_string()),
+            post_script: None,
+            assertions: vec![status_assertion(200)],
+            timeout: Some(2000),
+        }],
+    );
+    let ctx = ExecutionContext::new(&col);
+    let result = execute_collection(&col, ctx).await;
+
+    assert!(result.passed(), "{:?}", result.request_results[0].outcome);
+}
+
+#[tokio::test]
+async fn post_script_extracts_token_used_in_next_request() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/login"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({"token": "secret-token"})),
+        )
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/profile"))
+        .and(wiremock::matchers::header(
+            "authorization",
+            "Bearer secret-token",
+        ))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+
+    let col = collection(vec![
+        Request {
+            name: "login".to_string(),
+            method: "POST".to_string(),
+            url: format!("{}/login", server.uri()),
+            headers: HashMap::new(),
+            body: None,
+            pre_script: None,
+            post_script: Some(
+                r#"const d = response.json(); variables.set("token", d.token);"#.to_string(),
+            ),
+            assertions: vec![status_assertion(200)],
+            timeout: Some(2000),
+        },
+        Request {
+            name: "get-profile".to_string(),
+            method: "GET".to_string(),
+            url: format!("{}/profile", server.uri()),
+            headers: HashMap::from([("authorization".to_string(), "Bearer {{token}}".to_string())]),
+            body: None,
+            pre_script: None,
+            post_script: None,
+            assertions: vec![status_assertion(200)],
+            timeout: Some(2000),
+        },
+    ]);
+    let ctx = ExecutionContext::new(&col);
+    let result = execute_collection(&col, ctx).await;
+
+    assert!(result.passed(), "{:?}", result);
+}
+
+#[tokio::test]
+async fn post_script_delete_removes_variable_from_next_request() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/first"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/second"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+
+    let col = collection_with_vars(
+        HashMap::from([("key".to_string(), Some("value".to_string()))]),
+        vec![
+            Request {
+                name: "first".to_string(),
+                method: "GET".to_string(),
+                url: format!("{}/first", server.uri()),
+                headers: HashMap::new(),
+                body: None,
+                pre_script: None,
+                post_script: Some(r#"variables.delete("key");"#.to_string()),
+                assertions: vec![],
+                timeout: Some(2000),
+            },
+            Request {
+                name: "second".to_string(),
+                method: "GET".to_string(),
+                url: format!("{}/second", server.uri()),
+                headers: HashMap::new(),
+                body: None,
+                pre_script: None,
+                post_script: None,
+                assertions: vec![],
+                timeout: Some(2000),
+            },
+        ],
+    );
+
+    let ctx = ExecutionContext::new(&col);
+    let result = execute_collection(&col, ctx).await;
+
+    assert!(matches!(
+        result.request_results[0].outcome,
+        RequestOutcome::Passed
+    ));
+    assert!(matches!(
+        result.request_results[1].outcome,
+        RequestOutcome::Passed
+    ));
+}
+
+#[tokio::test]
+async fn pre_script_error_stops_request_next_continues() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/second"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+
+    let col = collection(vec![
+        Request {
+            name: "failing-pre-script".to_string(),
+            method: "GET".to_string(),
+            url: format!("{}/first", server.uri()),
+            headers: HashMap::new(),
+            body: None,
+            pre_script: Some(r#"throw new Error("pre-script boom");"#.to_string()),
+            post_script: None,
+            assertions: vec![],
+            timeout: Some(2000),
+        },
+        Request {
+            name: "ok".to_string(),
+            method: "GET".to_string(),
+            url: format!("{}/second", server.uri()),
+            headers: HashMap::new(),
+            body: None,
+            pre_script: None,
+            post_script: None,
+            assertions: vec![status_assertion(200)],
+            timeout: Some(2000),
+        },
+    ]);
+
+    let ctx = ExecutionContext::new(&col);
+    let result = execute_collection(&col, ctx).await;
+
+    assert!(
+        matches!(result.request_results[0].outcome, RequestOutcome::Error(_)),
+        "first should error"
+    );
+    assert!(result.request_results[0].response.is_none());
+    assert!(
+        matches!(result.request_results[1].outcome, RequestOutcome::Passed),
+        "second should pass"
+    );
+}
+
+#[tokio::test]
+async fn post_script_runtime_error_stops_request_response_captured() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/data"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("ok"))
+        .mount(&server)
+        .await;
+
+    let col = collection(vec![Request {
+        name: "failing-post-script".to_string(),
+        method: "GET".to_string(),
+        url: format!("{}/data", server.uri()),
+        headers: HashMap::new(),
+        body: None,
+        pre_script: None,
+        post_script: Some(r#"throw new Error("post-script boom");"#.to_string()),
+        assertions: vec![],
+        timeout: Some(2000),
+    }]);
+
+    let ctx = ExecutionContext::new(&col);
+    let result = execute_collection(&col, ctx).await;
+
+    assert!(matches!(
+        result.request_results[0].outcome,
+        RequestOutcome::Error(_)
+    ));
+    assert!(result.request_results[0].response.is_some());
+    assert_eq!(
+        result.request_results[0].response.as_ref().unwrap().status,
+        200
+    );
+}
+
+#[tokio::test]
+async fn script_timeout_produces_timeout_error() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/ok"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+
+    let col = collection(vec![Request {
+        name: "timeout-script".to_string(),
+        method: "GET".to_string(),
+        url: format!("{}/ok", server.uri()),
+        headers: HashMap::new(),
+        body: None,
+        pre_script: Some(r#"while(true) {}"#.to_string()),
+        post_script: None,
+        assertions: vec![],
+        timeout: Some(2000),
+    }]);
+
+    let ctx = ExecutionContext::new(&col);
+    let opts = RunnerOpts {
+        script_timeout_ms: 200,
+        isolate_script_variables: false,
+        continue_on_script_error: false,
+    };
+    let result = execute_collection_with_opts(&col, ctx, opts).await;
+
+    assert!(
+        matches!(
+            result.request_results[0].outcome,
+            RequestOutcome::Error(strex_core::RequestError::Script(_))
+        ),
+        "got: {:?}",
+        result.request_results[0].outcome
+    );
+}
+
+#[tokio::test]
+async fn continue_on_script_error_collects_assert_failure() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/data"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"value": 1})))
+        .mount(&server)
+        .await;
+
+    let col = collection(vec![Request {
+        name: "assert-in-script".to_string(),
+        method: "GET".to_string(),
+        url: format!("{}/data", server.uri()),
+        headers: HashMap::new(),
+        body: None,
+        pre_script: None,
+        post_script: Some(
+            r#"assert(response.json().value === 999, "value should be 999");"#.to_string(),
+        ),
+        assertions: vec![status_assertion(200)],
+        timeout: Some(2000),
+    }]);
+
+    let ctx = ExecutionContext::new(&col);
+    let opts = RunnerOpts {
+        script_timeout_ms: 5_000,
+        isolate_script_variables: false,
+        continue_on_script_error: true,
+    };
+    let result = execute_collection_with_opts(&col, ctx, opts).await;
+
+    assert!(
+        matches!(
+            result.request_results[0].outcome,
+            RequestOutcome::AssertionsFailed(_)
+        ),
+        "got: {:?}",
+        result.request_results[0].outcome
+    );
+}
+
+#[tokio::test]
+async fn isolate_script_variables_prevents_mutation_leaking() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/first"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/check/original"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+
+    let col = collection_with_vars(
+        HashMap::from([("key".to_string(), Some("original".to_string()))]),
+        vec![
+            Request {
+                name: "first".to_string(),
+                method: "GET".to_string(),
+                url: format!("{}/first", server.uri()),
+                headers: HashMap::new(),
+                body: None,
+                pre_script: None,
+                post_script: Some(r#"variables.set("key", "mutated");"#.to_string()),
+                assertions: vec![status_assertion(200)],
+                timeout: Some(2000),
+            },
+            Request {
+                name: "second".to_string(),
+                method: "GET".to_string(),
+                url: format!("{}/check/{{{{key}}}}", server.uri()),
+                headers: HashMap::new(),
+                body: None,
+                pre_script: None,
+                post_script: None,
+                assertions: vec![status_assertion(200)],
+                timeout: Some(2000),
+            },
+        ],
+    );
+
+    let ctx = ExecutionContext::new(&col);
+    let opts = RunnerOpts {
+        script_timeout_ms: 5_000,
+        isolate_script_variables: true,
+        continue_on_script_error: false,
+    };
+    let result = execute_collection_with_opts(&col, ctx, opts).await;
+
+    assert!(result.passed(), "{:?}", result);
+}
+
+#[tokio::test]
+async fn post_script_variables_clear_removes_all_for_next_request() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/first"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/second"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+
+    let col = collection_with_vars(
+        HashMap::from([
+            ("key1".to_string(), Some("val1".to_string())),
+            ("key2".to_string(), Some("val2".to_string())),
+        ]),
+        vec![
+            Request {
+                name: "first".to_string(),
+                method: "GET".to_string(),
+                url: format!("{}/first", server.uri()),
+                headers: HashMap::new(),
+                body: None,
+                pre_script: None,
+                post_script: Some(
+                    r#"variables.clear(); variables.set("fresh", "yes");"#.to_string(),
+                ),
+                assertions: vec![status_assertion(200)],
+                timeout: Some(2000),
+            },
+            Request {
+                name: "second".to_string(),
+                method: "GET".to_string(),
+                url: format!("{}/second", server.uri()),
+                headers: HashMap::new(),
+                body: None,
+                pre_script: None,
+                post_script: Some(
+                    r#"
+                    assert(!variables.has("key1"), "key1 should be cleared");
+                    assert(!variables.has("key2"), "key2 should be cleared");
+                    assert(variables.has("fresh"), "fresh should survive clear");
+                    "#
+                    .to_string(),
+                ),
+                assertions: vec![status_assertion(200)],
+                timeout: Some(2000),
+            },
+        ],
+    );
+
+    let ctx = ExecutionContext::new(&col);
+    let result = execute_collection(&col, ctx).await;
+
+    assert!(result.passed(), "{:?}", result);
+}
+
+#[tokio::test]
+async fn post_script_can_read_response_timing_total() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/timed"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("ok"))
+        .mount(&server)
+        .await;
+
+    let col = collection(vec![Request {
+        name: "timed".to_string(),
+        method: "GET".to_string(),
+        url: format!("{}/timed", server.uri()),
+        headers: HashMap::new(),
+        body: None,
+        pre_script: None,
+        post_script: Some(
+            r#"
+            const t = response.timing.total;
+            assert(typeof t === "number", "timing.total should be a number");
+            "#
+            .to_string(),
+        ),
+        assertions: vec![status_assertion(200)],
+        timeout: Some(2000),
+    }]);
+
+    let ctx = ExecutionContext::new(&col);
+    let result = execute_collection(&col, ctx).await;
+
+    assert!(result.passed(), "{:?}", result);
 }

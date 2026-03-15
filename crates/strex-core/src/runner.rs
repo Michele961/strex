@@ -1,13 +1,13 @@
 use std::collections::HashMap;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use serde_yaml::Value as YamlValue;
 
 use crate::assertions;
 use crate::collection::{Body, BodyType, Collection};
 use crate::context::ExecutionContext;
-use crate::error::{AssertionFailure, RequestError};
-use crate::http::{self, HttpResponse, ResolvedBody, ResolvedRequest};
+use crate::error::{AssertionFailure, AssertionType, RequestError};
+use crate::http::{self, ResolvedBody, ResolvedRequest};
 use crate::interpolation::interpolate;
 
 /// Aggregated result of running all requests in a collection.
@@ -44,7 +44,7 @@ pub struct RequestResult {
     /// Full lifecycle duration (phase 1 start → phase 7 end), in milliseconds.
     pub duration_ms: u64,
     /// HTTP response captured in phase 4. `None` if a stopping error occurred before phase 3.
-    pub response: Option<HttpResponse>,
+    pub response: Option<crate::http::HttpResponse>,
 }
 
 /// Outcome of a single request execution.
@@ -54,20 +54,57 @@ pub enum RequestOutcome {
     Passed,
     /// One or more declarative assertions failed; all collected (execution continues).
     AssertionsFailed(Vec<AssertionFailure>),
-    /// A stopping error occurred in phase 1 or 3; subsequent phases were skipped.
+    /// A stopping error occurred in phase 1, 2, or 3; subsequent phases were skipped.
     Error(RequestError),
 }
 
-/// Run all requests in `collection` sequentially.
+/// Runtime configuration for collection execution.
+///
+/// In SP3, these defaults are hardcoded. SP5 (CLI) will wire them to CLI flags.
+#[derive(Debug, Clone)]
+pub struct RunnerOpts {
+    /// Per-script CPU time limit in milliseconds. Default: 30_000.
+    pub script_timeout_ms: u64,
+    /// When `true`, variable mutations from scripts do not persist to subsequent requests.
+    /// Default: `false` (mutations persist — enables token chaining).
+    pub isolate_script_variables: bool,
+    /// When `true`, `assert()` failures in Phase 5 scripts are collected as non-stopping
+    /// assertion failures (alongside declarative assertions).
+    /// Default: `false` (`assert()` failures stop the request).
+    pub continue_on_script_error: bool,
+}
+
+impl Default for RunnerOpts {
+    fn default() -> Self {
+        Self {
+            script_timeout_ms: 30_000,
+            isolate_script_variables: false,
+            continue_on_script_error: false,
+        }
+    }
+}
+
+/// Run all requests in `collection` sequentially with default options.
 ///
 /// All per-request failures are captured in [`RequestOutcome`] — this function never fails.
 pub async fn execute_collection(
     collection: &Collection,
     context: ExecutionContext,
 ) -> CollectionResult {
+    execute_collection_with_opts(collection, context, RunnerOpts::default()).await
+}
+
+/// Run all requests with explicit runtime options (used for testing and SP5 CLI).
+///
+/// All per-request failures are captured in [`RequestOutcome`] — this function never fails.
+pub async fn execute_collection_with_opts(
+    collection: &Collection,
+    mut context: ExecutionContext,
+    opts: RunnerOpts,
+) -> CollectionResult {
     let mut results = Vec::with_capacity(collection.requests.len());
     for request in &collection.requests {
-        results.push(execute_request(request, &context).await);
+        results.push(execute_request(request, &mut context, &opts).await);
     }
     CollectionResult {
         request_results: results,
@@ -76,13 +113,41 @@ pub async fn execute_collection(
 
 async fn execute_request(
     request: &crate::collection::Request,
-    context: &ExecutionContext,
+    context: &mut ExecutionContext,
+    opts: &RunnerOpts,
 ) -> RequestResult {
     let start = Instant::now();
     let name = request.name.clone();
 
-    // Phase 1 — Template Interpolation
-    let vars = context.resolve_all();
+    // Phase 1 — Snapshot current variables for use by pre-script.
+    let mut vars = context.resolve_all();
+
+    // Phase 2 — Pre-Request Script
+    // Runs before template resolution so mutations affect URL/headers.
+    if let Some(script) = &request.pre_script {
+        let script_ctx = strex_script::ScriptContext {
+            response: None,
+            variables: vars.clone(),
+            environment: context.environment.clone(),
+            data: context.data.clone(),
+        };
+        match run_script(script, script_ctx, opts).await {
+            Ok(result) => {
+                apply_mutations(context, result, opts.isolate_script_variables);
+                vars = context.resolve_all(); // re-merge after mutations
+            }
+            Err(e) => {
+                return RequestResult {
+                    name,
+                    outcome: RequestOutcome::Error(RequestError::Script(e)),
+                    duration_ms: start.elapsed().as_millis() as u64,
+                    response: None,
+                };
+            }
+        }
+    }
+
+    // Phase 1 (continued) — Template Interpolation using post-Phase-2 vars
     let resolved = match resolve_request(request, &vars) {
         Ok(r) => r,
         Err(e) => {
@@ -108,8 +173,55 @@ async fn execute_request(
         }
     };
 
+    // Phase 5 — Post-Request Script
+    let mut script_assertion_failures: Vec<AssertionFailure> = Vec::new();
+    if let Some(script) = &request.post_script {
+        let script_response = strex_script::ScriptResponse {
+            status: response.status,
+            headers: response.headers.clone(),
+            body: response.body.clone(),
+            timing: strex_script::ScriptTiming {
+                dns_ms: response.timing.dns_ms,
+                connect_ms: response.timing.connect_ms,
+                tls_ms: response.timing.tls_ms,
+                send_ms: response.timing.send_ms,
+                wait_ms: response.timing.wait_ms,
+                receive_ms: response.timing.receive_ms,
+                total_ms: response.timing.total_ms,
+            },
+        };
+        let script_ctx = strex_script::ScriptContext {
+            response: Some(script_response),
+            variables: vars.clone(),
+            environment: context.environment.clone(),
+            data: context.data.clone(),
+        };
+        match run_script(script, script_ctx, opts).await {
+            Ok(result) => {
+                apply_mutations(context, result, opts.isolate_script_variables);
+            }
+            Err(strex_script::ScriptError::AssertionFailed { message })
+                if opts.continue_on_script_error =>
+            {
+                script_assertion_failures.push(AssertionFailure {
+                    assertion_type: AssertionType::Script,
+                    expected: message,
+                    actual: String::new(),
+                });
+            }
+            Err(e) => {
+                return RequestResult {
+                    name,
+                    outcome: RequestOutcome::Error(RequestError::Script(e)),
+                    duration_ms: start.elapsed().as_millis() as u64,
+                    response: Some(response),
+                };
+            }
+        }
+    }
+
     // Phase 6 — Declarative Assertions
-    let failures = match assertions::evaluate(&request.assertions, &response, &vars) {
+    let mut failures = match assertions::evaluate(&request.assertions, &response, &vars) {
         Ok(f) => f,
         Err(e) => {
             return RequestResult {
@@ -121,6 +233,8 @@ async fn execute_request(
         }
     };
 
+    failures.extend(script_assertion_failures);
+
     // Phase 7 — Result Recording
     let outcome = if failures.is_empty() {
         RequestOutcome::Passed
@@ -128,12 +242,63 @@ async fn execute_request(
         RequestOutcome::AssertionsFailed(failures)
     };
 
+    // Set total_ms now that the full lifecycle is done.
+    let mut response = response;
+    response.timing.total_ms = start.elapsed().as_millis() as u64;
+
     RequestResult {
         name,
         outcome,
         duration_ms: start.elapsed().as_millis() as u64,
         response: Some(response),
     }
+}
+
+/// Run a script on a blocking worker thread with a Tokio timeout (dual-layer).
+///
+/// The QuickJS interrupt handler provides a graceful layer-2 timeout; this function
+/// adds a hard layer-1 timeout via `tokio::time::timeout`.
+async fn run_script(
+    script: &str,
+    ctx: strex_script::ScriptContext,
+    opts: &RunnerOpts,
+) -> Result<strex_script::ScriptResult, strex_script::ScriptError> {
+    let script = script.to_string();
+    let script_opts = strex_script::ScriptOptions {
+        memory_limit_bytes: 64 * 1024 * 1024, // 64 MB
+        timeout_ms: opts.script_timeout_ms,
+    };
+    let handle = tokio::task::spawn_blocking(move || {
+        strex_script::execute_script(&script, ctx, &script_opts)
+    });
+    tokio::time::timeout(Duration::from_millis(opts.script_timeout_ms), handle)
+        .await
+        .map_err(|_| strex_script::ScriptError::Timeout {
+            limit_ms: opts.script_timeout_ms,
+        })?
+        .map_err(|join_err| strex_script::ScriptError::ThreadPanic {
+            cause: join_err.to_string(),
+        })?
+}
+
+/// Write script variable mutations back to `ExecutionContext.variables`.
+///
+/// If `isolate` is true, mutations are discarded (do not affect subsequent requests).
+fn apply_mutations(
+    context: &mut ExecutionContext,
+    result: strex_script::ScriptResult,
+    isolate: bool,
+) {
+    if isolate {
+        return;
+    }
+    if result.variables_cleared {
+        context.variables.clear();
+    }
+    for key in result.variable_deletions {
+        context.variables.remove(&key);
+    }
+    context.variables.extend(result.variable_mutations);
 }
 
 /// Interpolate all template fields in a request and produce a `ResolvedRequest`.
@@ -208,7 +373,6 @@ fn resolve_body(body: &Body, vars: &HashMap<String, String>) -> Result<ResolvedB
         }
 
         BodyType::Json => {
-            // Walk the YAML value tree, interpolate every String leaf, then convert to JSON.
             let resolved_yaml = interpolate_yaml_value(&body.content, vars)?;
             let json_value =
                 serde_json::to_value(&resolved_yaml).map_err(|e| RequestError::InvalidBody {
@@ -241,7 +405,6 @@ fn interpolate_yaml_value(
                 s.iter().map(|v| interpolate_yaml_value(v, vars)).collect();
             Ok(YamlValue::Sequence(resolved?))
         }
-        // Numbers, booleans, null — return as-is
         other => Ok(other.clone()),
     }
 }

@@ -60,7 +60,6 @@ pub enum CollectionError {
 
 /// Identifies which assertion type produced a failure.
 #[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code)]
 pub enum AssertionType {
     /// A `status` assertion.
     Status,
@@ -68,6 +67,8 @@ pub enum AssertionType {
     JsonPath,
     /// A `header` assertion.
     Header,
+    /// Assertion from a JavaScript script (`assert()`, `assertEqual()`, etc.)
+    Script,
 }
 
 /// A single assertion failure collected in phase 6 of the request lifecycle.
@@ -75,7 +76,6 @@ pub enum AssertionType {
 /// Failures are non-fatal — all failures for a request are collected before recording.
 /// SP5 (CLI) formats these for display.
 #[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code)]
 pub struct AssertionFailure {
     /// Which kind of assertion failed.
     pub assertion_type: AssertionType,
@@ -85,12 +85,11 @@ pub struct AssertionFailure {
     pub actual: String,
 }
 
-/// A stopping error for a single request (phases 1 or 3 of the request lifecycle).
+/// A stopping error for a single request (phases 1, 2, 3, or 5 of the request lifecycle).
 ///
 /// When a `RequestError` occurs the request is marked `Error` and execution continues
 /// to the next request in the collection. No `RequestError` stops the whole collection.
 #[derive(thiserror::Error, Debug)]
-#[allow(dead_code)]
 pub enum RequestError {
     /// Variable interpolation failed. Carries the original `CollectionError` to preserve
     /// structured fields (variable name, available variables, position) for user display.

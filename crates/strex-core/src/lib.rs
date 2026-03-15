@@ -15,5 +15,8 @@ pub use error::{AssertionFailure, AssertionType, CollectionError, RequestError};
 pub use http::{HttpResponse, RequestTiming};
 pub use interpolation::interpolate;
 pub use parser::parse_collection;
-pub use runner::{execute_collection, CollectionResult, RequestOutcome, RequestResult};
+pub use runner::{
+    execute_collection, execute_collection_with_opts, CollectionResult, RequestOutcome,
+    RequestResult, RunnerOpts,
+};
 pub use strex_script::ScriptError;
