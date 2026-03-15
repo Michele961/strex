@@ -19,10 +19,25 @@ pub(crate) struct DrainHandles {
 
 /// Drain all accumulated JS-side state into a [`ScriptResult`].
 pub(crate) fn drain(handles: DrainHandles, result: &mut ScriptResult) {
-    result.variable_mutations = handles.mutations.lock().unwrap().drain().collect();
-    result.variable_deletions = handles.deletions.lock().unwrap().drain(..).collect();
-    result.variables_cleared = *handles.cleared.lock().unwrap();
-    result.console_logs = handles.logs.lock().unwrap().drain(..).collect();
+    result.variable_mutations = handles
+        .mutations
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .drain()
+        .collect();
+    result.variable_deletions = handles
+        .deletions
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .drain(..)
+        .collect();
+    result.variables_cleared = *handles.cleared.lock().unwrap_or_else(|e| e.into_inner());
+    result.console_logs = handles
+        .logs
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .drain(..)
+        .collect();
 }
 
 /// Inject all Strex globals into the QuickJS context.
@@ -50,7 +65,10 @@ pub(crate) fn inject<'js>(
             let mutations_c = Arc::clone(&mutations);
             let f = Function::new(ctx.clone(), move |key: String, val: Value<'_>| {
                 let s = value_to_string(&val);
-                mutations_c.lock().unwrap().insert(key, s);
+                mutations_c
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert(key, s);
                 rquickjs::Result::Ok(())
             })?;
             vars_obj.set("set", f)?;
@@ -61,7 +79,7 @@ pub(crate) fn inject<'js>(
             let mutations_c = Arc::clone(&mutations);
             let initial_c = initial_vars.clone();
             let f = Function::new(ctx.clone(), move |key: String| {
-                let guard = mutations_c.lock().unwrap();
+                let guard = mutations_c.lock().unwrap_or_else(|e| e.into_inner());
                 let val = guard
                     .get(&key)
                     .or_else(|| initial_c.get(&key))
@@ -77,7 +95,7 @@ pub(crate) fn inject<'js>(
             let mutations_c = Arc::clone(&mutations);
             let initial_c = initial_vars.clone();
             let f = Function::new(ctx.clone(), move |key: String| {
-                let guard = mutations_c.lock().unwrap();
+                let guard = mutations_c.lock().unwrap_or_else(|e| e.into_inner());
                 let found = guard.contains_key(&key) || initial_c.contains_key(&key);
                 rquickjs::Result::Ok(found)
             })?;
@@ -88,7 +106,10 @@ pub(crate) fn inject<'js>(
         {
             let deletions_c = Arc::clone(&deletions);
             let f = Function::new(ctx.clone(), move |key: String| {
-                deletions_c.lock().unwrap().push(key);
+                deletions_c
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .push(key);
                 rquickjs::Result::Ok(())
             })?;
             vars_obj.set("delete", f)?;
@@ -98,7 +119,7 @@ pub(crate) fn inject<'js>(
         {
             let cleared_c = Arc::clone(&cleared);
             let f = Function::new(ctx.clone(), move || {
-                *cleared_c.lock().unwrap() = true;
+                *cleared_c.lock().unwrap_or_else(|e| e.into_inner()) = true;
                 rquickjs::Result::Ok(())
             })?;
             vars_obj.set("clear", f)?;
@@ -109,7 +130,7 @@ pub(crate) fn inject<'js>(
             let mutations_c = Arc::clone(&mutations);
             let initial_c = initial_vars.clone();
             let f = Function::new(ctx.clone(), move || {
-                let guard = mutations_c.lock().unwrap();
+                let guard = mutations_c.lock().unwrap_or_else(|e| e.into_inner());
                 let mut keys: Vec<String> = initial_c.keys().cloned().collect();
                 for k in guard.keys() {
                     if !keys.contains(k) {
@@ -286,7 +307,10 @@ fn inject_console_fn<'js>(
             .map(value_to_string)
             .collect::<Vec<_>>()
             .join(" ");
-        logs_c.lock().unwrap().push(ConsoleEntry { level, message });
+        logs_c
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(ConsoleEntry { level, message });
         rquickjs::Result::Ok(())
     })?;
     console_obj.set(method, f)?;
@@ -294,9 +318,13 @@ fn inject_console_fn<'js>(
 }
 
 /// Convert a JS [`Value`] to a Rust [`String`] using JavaScript's `String()` coercion rules.
+///
+/// Malformed surrogates from QuickJS return `<invalid utf-8>` rather than an empty string.
 pub(crate) fn value_to_string(val: &Value<'_>) -> String {
     if let Some(s) = val.as_string() {
-        return s.to_string().unwrap_or_default();
+        return s
+            .to_string()
+            .unwrap_or_else(|_| "<invalid utf-8>".to_string());
     }
     if let Some(n) = val.as_int() {
         return n.to_string();
