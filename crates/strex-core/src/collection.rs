@@ -33,8 +33,16 @@ pub struct Request {
     pub headers: HashMap<String, String>,
     /// Optional request body.
     pub body: Option<Body>,
-    /// Optional inline JavaScript to run after the response is received.
-    pub script: Option<String>,
+    /// JavaScript to run before the HTTP request (Phase 2). `response` is not available.
+    pub pre_script: Option<String>,
+
+    /// JavaScript to run after the HTTP response is captured (Phase 5).
+    ///
+    /// The YAML key `script:` is accepted as an alias for `post_script:` for backward
+    /// compatibility. Having both `script:` and `post_script:` in the same request block
+    /// is a `CollectionError::YamlParse` (duplicate field).
+    #[serde(alias = "script")]
+    pub post_script: Option<String>,
     /// Declarative assertions to evaluate against the response.
     /// Stored as raw maps — evaluated by the runner in sub-project 2.
     #[serde(default)]
@@ -84,7 +92,8 @@ mod tests {
             url: "https://example.com".to_string(),
             headers: Default::default(),
             body: None,
-            script: None,
+            pre_script: None,
+            post_script: None,
             assertions: vec![],
             timeout: None,
         };
