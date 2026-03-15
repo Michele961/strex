@@ -12,6 +12,10 @@ mod runner;
 
 pub use collection::{Body, BodyType, Collection, Request};
 pub use context::ExecutionContext;
+pub use data::{
+    parse_csv, parse_json, run_collection_with_data, DataError, DataRow, DataRunOpts,
+    DataRunResult, IterationResult,
+};
 pub use error::{AssertionFailure, AssertionType, CollectionError, RequestError};
 pub use http::{HttpResponse, RequestTiming};
 pub use interpolation::interpolate;

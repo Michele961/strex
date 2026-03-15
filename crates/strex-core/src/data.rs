@@ -1,5 +1,3 @@
-#![allow(dead_code)] // Items here will be used in Task 8 for data-driven collection execution
-
 use std::collections::HashMap;
 
 use crate::collection::Collection;
@@ -84,8 +82,24 @@ pub enum DataError {
 ///
 /// The first row is treated as the header (column names). All values are strings.
 /// Returns `Ok(vec![])` for content with no data rows (only a header or empty input).
-pub fn parse_csv(_content: &str) -> Result<Vec<DataRow>, DataError> {
-    todo!()
+pub fn parse_csv(content: &str) -> Result<Vec<DataRow>, DataError> {
+    let mut reader = csv::ReaderBuilder::new()
+        .flexible(false)
+        .from_reader(content.as_bytes());
+
+    let headers: Vec<String> = reader.headers()?.iter().map(|h| h.to_string()).collect();
+
+    let mut rows = Vec::new();
+    for record in reader.records() {
+        let record = record?;
+        let row: DataRow = headers
+            .iter()
+            .zip(record.iter())
+            .map(|(k, v)| (k.clone(), v.to_string()))
+            .collect();
+        rows.push(row);
+    }
+    Ok(rows)
 }
 
 /// Parse JSON content into rows.
