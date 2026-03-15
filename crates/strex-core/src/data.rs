@@ -1,7 +1,13 @@
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
+use tokio::sync::Semaphore;
+use tokio::task::JoinSet;
 
 use crate::collection::Collection;
-use crate::runner::{CollectionResult, RunnerOpts};
+use crate::context::ExecutionContext;
+use crate::runner::{execute_collection_with_opts, CollectionResult, RunnerOpts};
 
 /// A single row of data: column name → string value.
 pub type DataRow = HashMap<String, String>;
@@ -138,11 +144,89 @@ pub fn parse_json(content: &str) -> Result<Vec<DataRow>, DataError> {
 /// Returns `Ok(DataRunResult)` with all iteration results (including failures).
 /// Returns `Err(DataError)` only for invalid options or infrastructure failures.
 pub async fn run_collection_with_data(
-    _collection: Collection,
-    _rows: Vec<DataRow>,
-    _opts: DataRunOpts,
+    collection: Collection,
+    rows: Vec<DataRow>,
+    opts: DataRunOpts,
 ) -> Result<DataRunResult, DataError> {
-    todo!()
+    if opts.concurrency == 0 {
+        return Err(DataError::InvalidConcurrency);
+    }
+    if rows.is_empty() {
+        return Ok(DataRunResult {
+            iterations: vec![],
+            passed: 0,
+            failed: 0,
+        });
+    }
+
+    let arc_col = Arc::new(collection);
+    let semaphore = Arc::new(Semaphore::new(opts.concurrency));
+    let fail_flag = Arc::new(AtomicBool::new(false));
+    let fail_fast = opts.fail_fast;
+
+    let mut join_set: JoinSet<IterationResult> = JoinSet::new();
+
+    for (idx, row) in rows.into_iter().enumerate() {
+        // Check before blocking on semaphore acquisition.
+        if fail_fast && fail_flag.load(Ordering::Acquire) {
+            break;
+        }
+
+        let col = Arc::clone(&arc_col);
+        let sem = Arc::clone(&semaphore);
+        let flag = Arc::clone(&fail_flag);
+        let runner_opts = opts.runner_opts.clone();
+
+        // Block until a slot opens. AcquireError is structurally unreachable because
+        // we never explicitly close the semaphore, but we propagate via ? to comply
+        // with the no-expect-in-non-test-code rule.
+        let permit = sem
+            .acquire_owned()
+            .await
+            .map_err(|e| DataError::Internal(e.to_string()))?;
+
+        // Re-check after potentially blocking on acquire: a task that ran during the
+        // wait may have set the flag (critical for concurrency=1 correctness).
+        if fail_fast && fail_flag.load(Ordering::Acquire) {
+            break;
+        }
+
+        join_set.spawn(async move {
+            let _permit = permit; // auto-released on drop, freeing a semaphore slot
+            let ctx = ExecutionContext::new_with_data(&col, &row);
+            let collection_result = execute_collection_with_opts(&col, ctx, runner_opts).await;
+            if !collection_result.passed() {
+                flag.store(true, Ordering::Release);
+            }
+            IterationResult {
+                row_index: idx,
+                row,
+                collection_result,
+            }
+        });
+    }
+
+    let mut iteration_results: Vec<IterationResult> = Vec::new();
+    while let Some(res) = join_set.join_next().await {
+        match res {
+            Ok(iter_result) => iteration_results.push(iter_result),
+            Err(join_err) => return Err(DataError::TaskPanic(join_err.to_string())),
+        }
+    }
+
+    iteration_results.sort_by_key(|r| r.row_index);
+
+    let passed = iteration_results
+        .iter()
+        .filter(|r| r.collection_result.passed())
+        .count();
+    let failed = iteration_results.len() - passed;
+
+    Ok(DataRunResult {
+        iterations: iteration_results,
+        passed,
+        failed,
+    })
 }
 
 #[cfg(test)]

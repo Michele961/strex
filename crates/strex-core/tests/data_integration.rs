@@ -74,3 +74,179 @@ fn parse_json_row_not_object() {
         "expected JsonRowNotObject{{index:0}}, got: {result:?}"
     );
 }
+
+// ── run_collection_with_data ──────────────────────────────────────────────
+
+use std::collections::HashMap;
+use strex_core::{run_collection_with_data, Collection, DataRunOpts, Request};
+use wiremock::matchers::{method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
+
+/// Build a minimal one-request Collection that GETs `url`.
+fn simple_collection(url: &str) -> Collection {
+    Collection {
+        name: "test".to_string(),
+        version: "1.0".to_string(),
+        environment: HashMap::new(),
+        variables: HashMap::new(),
+        requests: vec![Request {
+            name: "req".to_string(),
+            method: "GET".to_string(),
+            url: url.to_string(),
+            headers: HashMap::new(),
+            body: None,
+            pre_script: None,
+            post_script: None,
+            assertions: vec![],
+            timeout: None,
+        }],
+    }
+}
+
+/// Build a one-request Collection whose assertion checks for HTTP `code`.
+fn collection_with_status_assertion(url: &str, code: u64) -> Collection {
+    use serde_yaml::Value as YamlValue;
+    use std::collections::HashMap as HM;
+    let mut assertion = HM::new();
+    assertion.insert(
+        "status".to_string(),
+        YamlValue::Number(serde_yaml::Number::from(code)),
+    );
+    Collection {
+        name: "test".to_string(),
+        version: "1.0".to_string(),
+        environment: HashMap::new(),
+        variables: HashMap::new(),
+        requests: vec![Request {
+            name: "req".to_string(),
+            method: "GET".to_string(),
+            url: url.to_string(),
+            headers: HashMap::new(),
+            body: None,
+            pre_script: None,
+            post_script: None,
+            assertions: vec![assertion],
+            timeout: None,
+        }],
+    }
+}
+
+#[tokio::test]
+async fn run_with_data_invalid_concurrency() {
+    let col = simple_collection("http://localhost:1");
+    let opts = DataRunOpts {
+        concurrency: 0,
+        ..DataRunOpts::default()
+    };
+    let result = run_collection_with_data(col, vec![], opts).await;
+    assert!(
+        matches!(result, Err(strex_core::DataError::InvalidConcurrency)),
+        "expected InvalidConcurrency, got: {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn run_with_data_zero_rows() {
+    let col = simple_collection("http://localhost:1");
+    let result = run_collection_with_data(col, vec![], DataRunOpts::default())
+        .await
+        .unwrap();
+    assert_eq!(result.iterations.len(), 0);
+    assert_eq!(result.passed, 0);
+    assert_eq!(result.failed, 0);
+}
+
+#[tokio::test]
+async fn run_with_data_sequential() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+
+    let col = simple_collection(&format!("{}/", server.uri()));
+    let rows: Vec<strex_core::DataRow> = vec![
+        [("user".to_string(), "alice".to_string())].into(),
+        [("user".to_string(), "bob".to_string())].into(),
+        [("user".to_string(), "carol".to_string())].into(),
+    ];
+    let opts = DataRunOpts {
+        concurrency: 1,
+        ..DataRunOpts::default()
+    };
+    let result = run_collection_with_data(col, rows, opts).await.unwrap();
+
+    assert_eq!(result.iterations.len(), 3);
+    // Results are in row order regardless of completion order.
+    assert_eq!(result.iterations[0].row_index, 0);
+    assert_eq!(result.iterations[1].row_index, 1);
+    assert_eq!(result.iterations[2].row_index, 2);
+    assert_eq!(result.passed, 3);
+    assert_eq!(result.failed, 0);
+    // Each row's data was injected into the context.
+    assert_eq!(result.iterations[0].row["user"], "alice");
+    assert_eq!(result.iterations[1].row["user"], "bob");
+    assert_eq!(result.iterations[2].row["user"], "carol");
+}
+
+#[tokio::test]
+async fn run_with_data_concurrent() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+
+    let col = simple_collection(&format!("{}/", server.uri()));
+    let rows: Vec<strex_core::DataRow> = vec![
+        [("id".to_string(), "1".to_string())].into(),
+        [("id".to_string(), "2".to_string())].into(),
+        [("id".to_string(), "3".to_string())].into(),
+    ];
+    let opts = DataRunOpts {
+        concurrency: 3,
+        ..DataRunOpts::default()
+    };
+    let result = run_collection_with_data(col, rows, opts).await.unwrap();
+
+    assert_eq!(result.iterations.len(), 3);
+    // Results must be returned in row order.
+    assert_eq!(result.iterations[0].row_index, 0);
+    assert_eq!(result.iterations[1].row_index, 1);
+    assert_eq!(result.iterations[2].row_index, 2);
+    assert_eq!(result.passed, 3);
+    assert_eq!(result.failed, 0);
+}
+
+#[tokio::test]
+async fn run_with_data_fail_fast() {
+    let server = MockServer::start().await;
+    // Return 500 to force assertion failure when we assert status == 200.
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&server)
+        .await;
+
+    let url = format!("{}/", server.uri());
+    // Collection asserts status == 200; server returns 500 → row 0 fails.
+    let col = collection_with_status_assertion(&url, 200);
+    let rows: Vec<strex_core::DataRow> = vec![
+        [("n".to_string(), "1".to_string())].into(),
+        [("n".to_string(), "2".to_string())].into(),
+        [("n".to_string(), "3".to_string())].into(),
+    ];
+    let opts = DataRunOpts {
+        concurrency: 1,
+        fail_fast: true,
+        ..DataRunOpts::default()
+    };
+    let result = run_collection_with_data(col, rows, opts).await.unwrap();
+
+    // With concurrency=1 and fail_fast=true, row 0 fails and rows 1+2 are not launched.
+    assert_eq!(result.iterations.len(), 1, "only row 0 should have run");
+    assert_eq!(result.failed, 1);
+    assert_eq!(result.passed, 0);
+}
