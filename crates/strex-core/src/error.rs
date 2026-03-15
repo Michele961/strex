@@ -138,7 +138,7 @@ pub enum RequestError {
     InvalidBody { cause: String },
 
     /// A script in phase 2 (pre-request) or phase 5 (post-request) failed.
-    #[error("script error: {0}")]
+    #[error("Script error: {0}")]
     Script(#[source] strex_script::ScriptError),
 }
 
@@ -212,6 +212,18 @@ mod tests {
             max_redirects: 10,
         };
         assert!(err.to_string().contains("api.example.com"), "{}", err);
+    }
+
+    #[test]
+    fn request_error_script_display_includes_script_error_message() {
+        let script_err = strex_script::ScriptError::Runtime {
+            message: "boom".to_string(),
+            stack: None,
+        };
+        let err = RequestError::Script(script_err);
+        let s = err.to_string();
+        assert!(s.starts_with("Script error:"), "got: {s}");
+        assert!(s.contains("boom"), "got: {s}");
     }
 
     #[test]
