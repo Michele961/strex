@@ -136,6 +136,10 @@ pub enum RequestError {
     /// Distinct from `InvalidAssertion` to prevent confusing error messages for body problems.
     #[error("Invalid request body: {cause}")]
     InvalidBody { cause: String },
+
+    /// A script in phase 2 (pre-request) or phase 5 (post-request) failed.
+    #[error("script error: {0}")]
+    Script(#[source] strex_script::ScriptError),
 }
 
 #[cfg(test)]

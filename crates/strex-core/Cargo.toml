@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+# JavaScript scripting engine — provides execute_script() for phases 2 and 5.
+strex-script = { path = "../strex-script" }
+
 # Typed error definitions for library crates (strex-core, strex-script)
 thiserror = "1"
 
