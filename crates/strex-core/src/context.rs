@@ -35,6 +35,16 @@ impl ExecutionContext {
         }
     }
 
+    /// Create a context pre-populated with a data row.
+    ///
+    /// `data` values shadow `variables` and `environment` in [`resolve_all`],
+    /// so each row's values take highest priority during template interpolation.
+    pub fn new_with_data(collection: &Collection, row: &HashMap<String, String>) -> Self {
+        let mut ctx = Self::new(collection);
+        ctx.data = row.clone();
+        ctx
+    }
+
     /// Merge all three layers into a flat `HashMap` for use with [`interpolate`].
     ///
     /// Keys in higher-priority layers shadow the same key in lower-priority layers.
@@ -117,5 +127,26 @@ mod tests {
         let col = collection_with(HashMap::new(), HashMap::new());
         let ctx = ExecutionContext::new(&col);
         assert!(ctx.data.is_empty());
+    }
+
+    #[test]
+    fn new_with_data_populates_data_field() {
+        let col = collection_with(HashMap::new(), HashMap::new());
+        let row = HashMap::from([
+            ("email".to_string(), "alice@example.com".to_string()),
+            ("name".to_string(), "Alice".to_string()),
+        ]);
+        let ctx = ExecutionContext::new_with_data(&col, &row);
+        assert_eq!(ctx.data["email"], "alice@example.com");
+        assert_eq!(ctx.data["name"], "Alice");
+    }
+
+    #[test]
+    fn new_with_data_row_beats_collection_variable() {
+        let vars = HashMap::from([("key".to_string(), Some("from_vars".to_string()))]);
+        let col = collection_with(HashMap::new(), vars);
+        let row = HashMap::from([("key".to_string(), "from_row".to_string())]);
+        let ctx = ExecutionContext::new_with_data(&col, &row);
+        assert_eq!(ctx.resolve_all()["key"], "from_row");
     }
 }
