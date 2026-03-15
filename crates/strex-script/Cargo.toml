@@ -6,3 +6,7 @@ edition = "2021"
 [dependencies]
 # Typed error definitions for library crates (strex-core, strex-script)
 thiserror = "1"
+
+# QuickJS JavaScript runtime — synchronous, lightweight (~1MB), suitable for sandboxed scripting.
+# "classes" enables Rust↔JS class bindings needed for injecting objects with methods.
+rquickjs = { version = "0.6", features = ["classes"] }
