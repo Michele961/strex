@@ -107,8 +107,30 @@ pub fn parse_csv(content: &str) -> Result<Vec<DataRow>, DataError> {
 /// The top-level value must be an array of objects. Each object's values are
 /// coerced to strings: `String` values are used directly; all other types use
 /// `.to_string()`. Returns `Ok(vec![])` for an empty array.
-pub fn parse_json(_content: &str) -> Result<Vec<DataRow>, DataError> {
-    todo!()
+pub fn parse_json(content: &str) -> Result<Vec<DataRow>, DataError> {
+    let value: serde_json::Value = serde_json::from_str(content)?;
+
+    let array = value.as_array().ok_or(DataError::JsonNotArray)?;
+
+    let mut rows = Vec::with_capacity(array.len());
+    for (index, element) in array.iter().enumerate() {
+        let obj = element
+            .as_object()
+            .ok_or(DataError::JsonRowNotObject { index })?;
+
+        let row: DataRow = obj
+            .iter()
+            .map(|(k, v)| {
+                let s = match v {
+                    serde_json::Value::String(s) => s.clone(),
+                    other => other.to_string(),
+                };
+                (k.clone(), s)
+            })
+            .collect();
+        rows.push(row);
+    }
+    Ok(rows)
 }
 
 /// Run `collection` once per row, with bounded concurrency and optional fail-fast.
