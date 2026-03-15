@@ -133,6 +133,30 @@ mod tests {
         );
     }
 
+    #[test]
+    fn variables_keys_returns_all_keys() {
+        let ctx = ctx_pre(); // has "key" = "val"
+        let result = execute_script(
+            r#"
+            variables.set("newKey", "newVal");
+            const ks = variables.keys();
+            variables.set("hasKey", ks.includes("key") ? "yes" : "no");
+            variables.set("hasNew", ks.includes("newKey") ? "yes" : "no");
+            "#,
+            ctx,
+            &opts(),
+        )
+        .unwrap();
+        assert_eq!(
+            result.variable_mutations.get("hasKey").map(|s| s.as_str()),
+            Some("yes")
+        );
+        assert_eq!(
+            result.variable_mutations.get("hasNew").map(|s| s.as_str()),
+            Some("yes")
+        );
+    }
+
     // ── assertions ──────────────────────────────────────────────────────────
 
     #[test]
@@ -267,6 +291,35 @@ mod tests {
         assert_eq!(
             result.variable_mutations.get("t").map(|s| s.as_str()),
             Some("42")
+        );
+    }
+
+    #[test]
+    fn response_headers_accessible() {
+        let mut resp = default_response();
+        resp.headers
+            .insert("content-type".to_string(), "application/json".to_string());
+        let ctx = ctx_with_response(resp);
+        let result = execute_script(
+            r#"variables.set("ct", response.headers["content-type"]);"#,
+            ctx,
+            &opts(),
+        )
+        .unwrap();
+        assert_eq!(
+            result.variable_mutations.get("ct").map(|s| s.as_str()),
+            Some("application/json")
+        );
+    }
+
+    #[test]
+    fn env_get_returns_environment_value() {
+        let ctx = ctx_with_response(default_response()); // has ENV="test"
+        let result =
+            execute_script(r#"variables.set("e", env.get("ENV"));"#, ctx, &opts()).unwrap();
+        assert_eq!(
+            result.variable_mutations.get("e").map(|s| s.as_str()),
+            Some("test")
         );
     }
 
