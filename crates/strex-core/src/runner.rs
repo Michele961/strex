@@ -242,14 +242,17 @@ async fn execute_request(
         RequestOutcome::AssertionsFailed(failures)
     };
 
-    // Set total_ms now that the full lifecycle is done.
+    // Capture elapsed once — used for both RequestResult.duration_ms and
+    // response.timing.total_ms. Both represent the full lifecycle duration
+    // (phase 1 start → phase 7 end), not the HTTP-only round-trip time.
+    let duration_ms = start.elapsed().as_millis() as u64;
     let mut response = response;
-    response.timing.total_ms = start.elapsed().as_millis() as u64;
+    response.timing.total_ms = duration_ms;
 
     RequestResult {
         name,
         outcome,
-        duration_ms: start.elapsed().as_millis() as u64,
+        duration_ms,
         response: Some(response),
     }
 }

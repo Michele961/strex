@@ -559,7 +559,10 @@ async fn post_script_delete_removes_variable_from_next_request() {
                 headers: HashMap::new(),
                 body: None,
                 pre_script: None,
-                post_script: None,
+                // Assert that the variable is actually absent — not just that the request passes.
+                post_script: Some(
+                    r#"assert(!variables.has("key"), "key should have been deleted");"#.to_string(),
+                ),
                 assertions: vec![],
                 timeout: Some(2000),
             },
@@ -573,10 +576,11 @@ async fn post_script_delete_removes_variable_from_next_request() {
         result.request_results[0].outcome,
         RequestOutcome::Passed
     ));
-    assert!(matches!(
-        result.request_results[1].outcome,
-        RequestOutcome::Passed
-    ));
+    assert!(
+        matches!(result.request_results[1].outcome, RequestOutcome::Passed),
+        "second should pass — key should be absent: {:?}",
+        result.request_results[1].outcome
+    );
 }
 
 #[tokio::test]
