@@ -20,13 +20,16 @@ serde_yaml = "0.9"
 strsim = "0.11"
 
 # Async runtime — runner is fully async
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
 
 # HTTP client — rustls for TLS (no OpenSSL dep), json feature for serde integration
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
 # JSON value manipulation
 serde_json = "1"
+
+# CSV parsing for data-driven testing (SP4); StringRecord-based, no serde features needed
+csv = "1"
 
 # RFC 9535-compliant JSONPath — actively maintained alternative to jsonpath_lib (0.6.x had internal version conflicts; using 0.7)
 serde_json_path = "0.7"
