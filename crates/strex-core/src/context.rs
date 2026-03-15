@@ -12,7 +12,8 @@ pub struct ExecutionContext {
     pub environment: HashMap<String, String>,
     /// Mutable per-iteration collection variables — mid priority.
     pub variables: HashMap<String, String>,
-    /// Per-iteration data row — highest priority. Empty until SP4 adds data-driven support.
+    /// Per-iteration data row — highest priority. Populated by [`ExecutionContext::new_with_data`]
+    /// for data-driven runs; empty for standard single-collection runs.
     pub data: HashMap<String, String>,
 }
 
