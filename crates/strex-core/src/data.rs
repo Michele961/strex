@@ -195,7 +195,7 @@ pub async fn run_collection_with_data(
             let _permit = permit; // auto-released on drop, freeing a semaphore slot
             let ctx = ExecutionContext::new_with_data(&col, &row);
             let collection_result = execute_collection_with_opts(&col, ctx, runner_opts).await;
-            if !collection_result.passed() {
+            if fail_fast && !collection_result.passed() {
                 flag.store(true, Ordering::Release);
             }
             IterationResult {
