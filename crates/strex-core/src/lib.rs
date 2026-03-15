@@ -3,7 +3,7 @@
 mod assertions;
 mod collection;
 mod context;
-pub mod data;
+mod data;
 mod error;
 mod http;
 mod interpolation;

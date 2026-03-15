@@ -1,3 +1,5 @@
+#![allow(dead_code)] // Items here will be used in Task 8 for data-driven collection execution
+
 use std::collections::HashMap;
 
 use crate::collection::Collection;
