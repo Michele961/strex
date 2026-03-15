@@ -57,8 +57,8 @@ pub(crate) async fn send(request: &ResolvedRequest) -> Result<HttpResponse, Requ
         })?;
 
     let method = reqwest::Method::from_bytes(request.method.as_bytes()).map_err(|e| {
-        RequestError::InvalidResponse {
-            cause: e.to_string(),
+        RequestError::InvalidBody {
+            cause: format!("invalid HTTP method '{}': {}", request.method, e),
         }
     })?;
 
@@ -95,7 +95,7 @@ pub(crate) async fn send(request: &ResolvedRequest) -> Result<HttpResponse, Requ
     let mut headers: HashMap<String, String> = HashMap::new();
     for (name, value) in resp.headers() {
         let key = name.as_str().to_lowercase();
-        let val = value.to_str().unwrap_or("").to_string();
+        let val = String::from_utf8_lossy(value.as_bytes()).into_owned();
         headers
             .entry(key)
             .and_modify(|existing| {

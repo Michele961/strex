@@ -2,42 +2,52 @@
 use crate::error::{AssertionFailure, RequestError};
 use crate::http::HttpResponse;
 
-/// The aggregated result of running an entire collection.
+/// Aggregated result of running all requests in a collection.
 #[derive(Debug)]
 pub struct CollectionResult {
+    /// Results for each request in the collection, in declaration order.
     pub request_results: Vec<RequestResult>,
 }
 
 impl CollectionResult {
-    /// Returns `true` if all requests passed with no assertion failures or errors.
+    /// Returns `true` iff every request outcome is [`RequestOutcome::Passed`].
     pub fn passed(&self) -> bool {
         todo!()
     }
 
-    /// Returns the number of requests that failed (assertion failures or errors).
+    /// Count of requests whose outcome is not `Passed`.
     pub fn failure_count(&self) -> usize {
         todo!()
     }
 }
 
-/// The result of a single request execution within a collection run.
+/// Result of executing a single request through all applicable lifecycle phases.
 #[derive(Debug)]
 pub struct RequestResult {
+    /// The request name from the collection YAML.
     pub name: String,
+    /// Final outcome for this request.
     pub outcome: RequestOutcome,
+    /// Full lifecycle duration (phase 1 start → phase 7 end), in milliseconds.
     pub duration_ms: u64,
+    /// HTTP response captured in phase 4. `None` if a stopping error occurred before phase 3.
     pub response: Option<HttpResponse>,
 }
 
-/// The outcome of a single request execution.
+/// Outcome of a single request execution.
 #[derive(Debug)]
 pub enum RequestOutcome {
+    /// All assertions passed (or no assertions defined).
     Passed,
+    /// One or more declarative assertions failed; all collected (execution continues).
     AssertionsFailed(Vec<AssertionFailure>),
+    /// A stopping error occurred in phase 1 or 3; subsequent phases were skipped.
     Error(RequestError),
 }
 
-/// Execute all requests in a collection and return the aggregated result.
+/// Run all requests in `collection` sequentially.
+///
+/// All per-request failures are captured in [`RequestOutcome`] — this function never fails.
 pub async fn execute_collection(
     _collection: &crate::collection::Collection,
     _context: crate::context::ExecutionContext,
