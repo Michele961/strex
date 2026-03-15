@@ -1,6 +1,9 @@
 use std::collections::HashMap;
 
 /// Per-request timing breakdown exposed to JavaScript scripts.
+///
+/// Rust fields use `_ms` suffix for clarity; JavaScript exposes them without the
+/// suffix (e.g., `response.timing.dns`, `response.timing.total`).
 #[derive(Debug, Clone, Default)]
 pub struct ScriptTiming {
     /// DNS resolution time in ms.
@@ -36,10 +39,11 @@ pub struct ScriptResponse {
 }
 
 /// Input to a single script execution.
+#[derive(Debug)]
 pub struct ScriptContext {
     /// HTTP response from Phase 4. `None` in Phase 2 (pre-request scripts).
     pub response: Option<ScriptResponse>,
-    /// Flat merged variable map (data > variables > environment).
+    /// Mutable collection-layer variables, exposed to JS as the writable `variables` global.
     pub variables: HashMap<String, String>,
     /// Environment layer — read-only in JS (`env` global).
     pub environment: HashMap<String, String>,
@@ -69,7 +73,7 @@ pub struct ScriptResult {
 }
 
 /// A single console output entry with log level preserved.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ConsoleEntry {
     /// The log level/severity.
     pub level: LogLevel,
@@ -89,6 +93,7 @@ pub enum LogLevel {
 }
 
 /// Options controlling the QuickJS runtime limits.
+#[derive(Debug, Clone)]
 pub struct ScriptOptions {
     /// QuickJS heap memory limit in bytes. Default: 64 * 1024 * 1024 (64 MB).
     pub memory_limit_bytes: usize,

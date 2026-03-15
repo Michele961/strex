@@ -19,7 +19,8 @@ pub enum ScriptError {
     /// Script exceeded its CPU time limit.
     ///
     /// May be raised by the QuickJS interrupt handler (graceful) or by the Tokio
-    /// timeout in `run_script()` (hard kill).
+    /// timeout in `run_script()` (hard kill). `limit_ms` is in milliseconds,
+    /// consistent with `ScriptOptions::timeout_ms`.
     #[error("script exceeded {limit_ms}ms time limit")]
     Timeout { limit_ms: u64 },
 
