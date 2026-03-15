@@ -1,7 +1,5 @@
 //! Integration tests for SP4 data-driven parsing and orchestration.
 
-use std::collections::HashMap;
-
 use strex_core::{parse_csv, parse_json, DataError};
 
 // ── parse_csv ─────────────────────────────────────────────────────────────
