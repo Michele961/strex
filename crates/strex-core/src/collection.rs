@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 /// The top-level container parsed from a Strex YAML collection file.
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Collection {
     /// Human-readable collection name.
@@ -19,7 +19,7 @@ pub struct Collection {
 }
 
 /// A single HTTP request definition within a collection.
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Request {
     /// Unique name for this request (used in output and error messages).
@@ -52,7 +52,7 @@ pub struct Request {
 }
 
 /// The body to send with a request.
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Body {
     /// How the body content should be serialised before sending.
@@ -63,7 +63,7 @@ pub struct Body {
 }
 
 /// The serialisation format for a request body.
-#[derive(Debug, serde::Deserialize, PartialEq)]
+#[derive(Debug, Clone, serde::Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum BodyType {
     /// Serialise as JSON (`Content-Type: application/json`).
@@ -97,5 +97,36 @@ mod tests {
             assertions: vec![],
             timeout: None,
         };
+    }
+
+    #[test]
+    fn collection_request_body_body_type_implement_clone() {
+        let col = Collection {
+            name: "c".to_string(),
+            version: "1.0".to_string(),
+            environment: HashMap::new(),
+            variables: HashMap::new(),
+            requests: vec![Request {
+                name: "r".to_string(),
+                method: "GET".to_string(),
+                url: "https://example.com".to_string(),
+                headers: HashMap::new(),
+                body: Some(Body {
+                    body_type: BodyType::Json,
+                    content: serde_yaml::Value::Null,
+                }),
+                pre_script: None,
+                post_script: None,
+                assertions: vec![],
+                timeout: None,
+            }],
+        };
+        let cloned = col.clone();
+        assert_eq!(cloned.name, "c");
+        assert_eq!(cloned.requests[0].name, "r");
+        assert!(matches!(
+            cloned.requests[0].body.as_ref().unwrap().body_type,
+            BodyType::Json
+        ));
     }
 }
