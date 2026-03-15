@@ -1,15 +1,129 @@
+use std::time::{Duration, Instant};
+
+use rquickjs::{Context, Runtime, Value};
+
+use crate::api;
 use crate::context::{ScriptContext, ScriptOptions, ScriptResult};
 use crate::error::ScriptError;
 
-/// Execute a JavaScript script synchronously.
+/// Execute a JavaScript script synchronously inside a QuickJS sandbox.
 ///
 /// Must be called inside `tokio::task::spawn_blocking` — never on an async thread.
 pub fn execute_script(
-    _script: &str,
-    _context: ScriptContext,
-    _opts: &ScriptOptions,
+    script: &str,
+    context: ScriptContext,
+    opts: &ScriptOptions,
 ) -> Result<ScriptResult, ScriptError> {
-    todo!("Implemented in Task 4")
+    let rt = Runtime::new().map_err(|e| ScriptError::RuntimeInit {
+        cause: e.to_string(),
+    })?;
+    rt.set_memory_limit(opts.memory_limit_bytes);
+
+    // Layer 2 timeout: QuickJS interrupt handler (graceful stop).
+    // Layer 1 (hard kill) is tokio::time::timeout in run_script() in the runner.
+    let deadline = Instant::now() + Duration::from_millis(opts.timeout_ms);
+    rt.set_interrupt_handler(Some(Box::new(move || Instant::now() >= deadline)));
+
+    let ctx = Context::full(&rt).map_err(|e| {
+        let msg = e.to_string();
+        if msg.contains("Allocation") || msg.contains("out of memory") || msg.contains("memory") {
+            ScriptError::MemoryLimit {
+                limit_mb: (opts.memory_limit_bytes / (1024 * 1024)) as u64,
+            }
+        } else {
+            ScriptError::RuntimeInit { cause: msg }
+        }
+    })?;
+
+    let mut result = ScriptResult::default();
+
+    // Use `qctx` (Ctx<'_>) to avoid shadowing the outer `ctx` (Context).
+    ctx.with(|qctx| -> Result<(), ScriptError> {
+        let handles = api::inject(&qctx, &context).map_err(|e| {
+            let msg = e.to_string();
+            if msg.contains("Allocation") || msg.contains("out of memory") || msg.contains("memory")
+            {
+                ScriptError::MemoryLimit {
+                    limit_mb: (opts.memory_limit_bytes / (1024 * 1024)) as u64,
+                }
+            } else {
+                ScriptError::RuntimeInit { cause: msg }
+            }
+        })?;
+
+        let eval_result = qctx.eval::<(), _>(script.as_bytes());
+
+        match eval_result {
+            Ok(()) => {
+                api::drain(handles, &mut result);
+                Ok(())
+            }
+            Err(rquickjs::Error::Exception) => {
+                let exception = qctx.catch();
+                Err(classify_exception(exception, opts, deadline))
+            }
+            Err(e) => Err(ScriptError::RuntimeInit {
+                cause: e.to_string(),
+            }),
+        }
+    })?;
+
+    Ok(result)
+}
+
+/// Classify a caught JS exception into the appropriate [`ScriptError`] variant.
+fn classify_exception<'js>(
+    exception: Value<'js>,
+    opts: &ScriptOptions,
+    deadline: Instant,
+) -> ScriptError {
+    let (name, message, stack) = if let Some(obj) = exception.as_object() {
+        let name: String = obj.get("name").unwrap_or_default();
+        let message: String = obj.get("message").unwrap_or_default();
+        let stack: Option<String> = obj.get("stack").ok();
+        (name, message, stack)
+    } else if let Some(s) = exception.as_string() {
+        (String::new(), s.to_string().unwrap_or_default(), None)
+    } else {
+        (String::new(), "Unknown error".to_string(), None)
+    };
+
+    if name == "AssertionError" {
+        return ScriptError::AssertionFailed { message };
+    }
+    if name == "InternalError" && (message.contains("interrupted") || Instant::now() >= deadline) {
+        return ScriptError::Timeout {
+            limit_ms: opts.timeout_ms,
+        };
+    }
+    if message.contains("out of memory") {
+        return ScriptError::MemoryLimit {
+            limit_mb: (opts.memory_limit_bytes / (1024 * 1024)) as u64,
+        };
+    }
+    if name == "SyntaxError" {
+        // Compile-time SyntaxErrors from the top-level eval have a stack that shows
+        // a bare `eval_script:` frame WITHOUT an enclosing `<eval>` function wrapper.
+        // Runtime SyntaxErrors (e.g. from JSON.parse) have `<eval>` in the stack
+        // because they occur inside a called function.
+        let is_runtime = stack.as_deref().is_some_and(|s| s.contains("<eval>"));
+        if !is_runtime {
+            let line: u32 = exception
+                .as_object()
+                .and_then(|o| o.get::<_, u32>("lineNumber").ok())
+                .unwrap_or(0);
+            let column: u32 = exception
+                .as_object()
+                .and_then(|o| o.get::<_, u32>("columnNumber").ok())
+                .unwrap_or(0);
+            return ScriptError::Compilation {
+                line,
+                column,
+                message,
+            };
+        }
+    }
+    ScriptError::Runtime { message, stack }
 }
 
 #[cfg(test)]
