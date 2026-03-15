@@ -2,6 +2,30 @@ use std::collections::HashMap;
 
 use crate::error::RequestError;
 
+/// Per-request timing breakdown.
+///
+/// `dns_ms`, `connect_ms`, `tls_ms`, and `send_ms` require deep hyper internals
+/// and are not captured in SP3 — they default to 0. `wait_ms` and `receive_ms`
+/// are measured with `Instant` around the reqwest call phases.
+/// `total_ms` is set by the runner (Phase 1 start → Phase 7 end).
+#[derive(Debug, Clone, Default)]
+pub struct RequestTiming {
+    /// DNS resolution time in ms. 0 in SP3 (not separately measurable via reqwest 0.12).
+    pub dns_ms: u64,
+    /// TCP connect time in ms. 0 in SP3.
+    pub connect_ms: u64,
+    /// TLS handshake time in ms. 0 for plain HTTP; 0 in SP3 (not separately measurable).
+    pub tls_ms: u64,
+    /// Request body write time in ms. 0 in SP3.
+    pub send_ms: u64,
+    /// Time from request send to first response byte (TTFB) in ms.
+    pub wait_ms: u64,
+    /// Response body read time in ms.
+    pub receive_ms: u64,
+    /// Total lifecycle duration — set by the runner, not by `send()`.
+    pub total_ms: u64,
+}
+
 /// Captured HTTP response — available to assertions (Phase 6) and scripts (SP3).
 #[derive(Debug, Clone)]
 pub struct HttpResponse {
@@ -13,6 +37,8 @@ pub struct HttpResponse {
     pub headers: HashMap<String, String>,
     /// Response body as a UTF-8 string.
     pub body: String,
+    /// Per-request timing breakdown. `total_ms` is set by the runner after Phase 7.
+    pub timing: RequestTiming,
 }
 
 /// Internal resolved request constructed by the runner for consumption by `send`.
@@ -78,10 +104,12 @@ pub(crate) async fn send(request: &ResolvedRequest) -> Result<HttpResponse, Requ
         Some(ResolvedBody::Form(m)) => req.form(m),
     };
 
+    let send_start = std::time::Instant::now();
     let resp = req
         .send()
         .await
         .map_err(|e| map_reqwest_error(e, url, request.timeout_ms))?;
+    let wait_ms = send_start.elapsed().as_millis() as u64;
 
     let status = resp.status().as_u16();
 
@@ -99,17 +127,26 @@ pub(crate) async fn send(request: &ResolvedRequest) -> Result<HttpResponse, Requ
             .or_insert(val);
     }
 
+    let receive_start = std::time::Instant::now();
     let body = resp
         .text()
         .await
         .map_err(|e| RequestError::InvalidResponse {
             cause: e.to_string(),
         })?;
+    let receive_ms = receive_start.elapsed().as_millis() as u64;
+
+    let timing = RequestTiming {
+        wait_ms,
+        receive_ms,
+        ..Default::default() // dns_ms, connect_ms, tls_ms, send_ms all 0 in SP3
+    };
 
     Ok(HttpResponse {
         status,
         headers,
         body,
+        timing,
     })
 }
 
@@ -269,5 +306,25 @@ mod tests {
             ),
             "expected ConnectionRefused or Network, got: {err:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn timing_fields_populated_after_successful_get() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/timed"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("ok"))
+            .mount(&server)
+            .await;
+
+        let req = make_get(&format!("{}/timed", server.uri()));
+        let resp = send(&req).await.expect("should succeed");
+
+        // wait_ms and receive_ms should be measurable (even if tiny)
+        // dns_ms, connect_ms, tls_ms may be 0 (not captured in SP3)
+        assert!(resp.timing.wait_ms < 10_000, "wait_ms sanity check");
+        assert!(resp.timing.receive_ms < 10_000, "receive_ms sanity check");
+        // total_ms is set by the runner, not send() — should be 0 here
+        assert_eq!(resp.timing.total_ms, 0);
     }
 }

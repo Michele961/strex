@@ -12,7 +12,7 @@ mod runner;
 pub use collection::{Body, BodyType, Collection, Request};
 pub use context::ExecutionContext;
 pub use error::{AssertionFailure, AssertionType, CollectionError, RequestError};
-pub use http::HttpResponse;
+pub use http::{HttpResponse, RequestTiming};
 pub use interpolation::interpolate;
 pub use parser::parse_collection;
 pub use runner::{execute_collection, CollectionResult, RequestOutcome, RequestResult};

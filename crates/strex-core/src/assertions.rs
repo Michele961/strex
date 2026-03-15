@@ -349,6 +349,7 @@ mod tests {
             status,
             headers: HashMap::new(),
             body: body.to_string(),
+            timing: crate::http::RequestTiming::default(),
         }
     }
 
@@ -359,6 +360,7 @@ mod tests {
             status,
             headers,
             body: String::new(),
+            timing: crate::http::RequestTiming::default(),
         }
     }
 
