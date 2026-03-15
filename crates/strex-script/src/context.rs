@@ -1,10 +1,44 @@
 use std::collections::HashMap;
-use strex_core::HttpResponse;
+
+/// Per-request timing breakdown exposed to JavaScript scripts.
+#[derive(Debug, Clone, Default)]
+pub struct ScriptTiming {
+    /// DNS resolution time in ms.
+    pub dns_ms: u64,
+    /// TCP connect time in ms.
+    pub connect_ms: u64,
+    /// TLS handshake time in ms.
+    pub tls_ms: u64,
+    /// Request body write time in ms.
+    pub send_ms: u64,
+    /// Time from request send to first response byte in ms.
+    pub wait_ms: u64,
+    /// Response body read time in ms.
+    pub receive_ms: u64,
+    /// Total lifecycle duration in ms.
+    pub total_ms: u64,
+}
+
+/// HTTP response data exposed to JavaScript scripts.
+///
+/// This is a self-contained type that mirrors the fields of `strex_core::HttpResponse`
+/// without importing it — avoiding a circular crate dependency.
+#[derive(Debug, Clone)]
+pub struct ScriptResponse {
+    /// HTTP status code (e.g., 200, 404).
+    pub status: u16,
+    /// Response headers, lowercased.
+    pub headers: HashMap<String, String>,
+    /// Response body as a UTF-8 string.
+    pub body: String,
+    /// Per-phase timing breakdown.
+    pub timing: ScriptTiming,
+}
 
 /// Input to a single script execution.
 pub struct ScriptContext {
     /// HTTP response from Phase 4. `None` in Phase 2 (pre-request scripts).
-    pub response: Option<HttpResponse>,
+    pub response: Option<ScriptResponse>,
     /// Flat merged variable map (data > variables > environment).
     pub variables: HashMap<String, String>,
     /// Environment layer — read-only in JS (`env` global).

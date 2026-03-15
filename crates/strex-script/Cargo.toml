@@ -11,5 +11,3 @@ thiserror = "1"
 # "classes" enables Rust↔JS class bindings needed for injecting objects with methods.
 rquickjs = { version = "0.6", features = ["classes"] }
 
-# Core types: HttpResponse, collection parsing, and variable interpolation
-strex-core = { path = "../strex-core" }
