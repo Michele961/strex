@@ -16,8 +16,6 @@ pub struct HttpResponse {
 }
 
 /// Internal resolved request constructed by the runner for consumption by `send`.
-// Allow dead_code: consumed by runner.rs (Task 6) which is a stub at this stage.
-#[allow(dead_code)]
 pub(crate) struct ResolvedRequest {
     pub method: String,
     pub url: String,
@@ -28,8 +26,6 @@ pub(crate) struct ResolvedRequest {
 }
 
 /// Resolved body content ready to hand to reqwest.
-// Allow dead_code: consumed by runner.rs (Task 6) which is a stub at this stage.
-#[allow(dead_code)]
 pub(crate) enum ResolvedBody {
     Json(serde_json::Value),
     Text(String),
@@ -42,8 +38,6 @@ pub(crate) enum ResolvedBody {
 /// Only transport-level failures (DNS, TLS, timeout, etc.) return `Err`.
 ///
 /// A new `reqwest::Client` is built per call (connection pooling deferred to SP5).
-// Allow dead_code: called by runner.rs (Task 6) which is a stub at this stage.
-#[allow(dead_code)]
 pub(crate) async fn send(request: &ResolvedRequest) -> Result<HttpResponse, RequestError> {
     use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 
@@ -120,8 +114,6 @@ pub(crate) async fn send(request: &ResolvedRequest) -> Result<HttpResponse, Requ
 }
 
 /// Extract the hostname from a URL for use in error messages.
-// Allow dead_code: called only by map_reqwest_error, both removed when runner is wired up.
-#[allow(dead_code)]
 fn extract_domain(url: &str) -> String {
     url.split("://")
         .nth(1)
@@ -135,8 +127,6 @@ fn extract_domain(url: &str) -> String {
 ///
 /// reqwest surfaces DNS, TLS, and connection-refused errors all as `is_connect()`.
 /// We use string inspection of the error message as a best-effort heuristic.
-// Allow dead_code: called by send(), which is unused until runner.rs (Task 6) is wired up.
-#[allow(dead_code)]
 fn map_reqwest_error(e: reqwest::Error, url: &str, timeout_ms: u64) -> RequestError {
     if e.is_timeout() {
         return RequestError::Timeout {
