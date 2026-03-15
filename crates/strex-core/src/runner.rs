@@ -210,6 +210,10 @@ async fn execute_request(
                 });
             }
             Err(e) => {
+                // MVP behaviour: a non-assertion post-script error stops the request and
+                // skips Phase 6 declarative assertions. ADR-0002 says to "continue to
+                // assertions", but implementing that requires merging two failure sources.
+                // Tracked for SP5 refinement.
                 return RequestResult {
                     name,
                     outcome: RequestOutcome::Error(RequestError::Script(e)),

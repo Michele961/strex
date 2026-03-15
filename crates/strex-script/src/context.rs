@@ -19,6 +19,10 @@ pub struct ScriptTiming {
     /// Response body read time in ms.
     pub receive_ms: u64,
     /// Total lifecycle duration in ms.
+    ///
+    /// **Note:** This field is always `0` when read from a Phase 5 (post-request) script
+    /// because the runner sets it at Phase 7 completion — after the script has finished.
+    /// Use `wait_ms + receive_ms` for an approximation of HTTP round-trip time.
     pub total_ms: u64,
 }
 
