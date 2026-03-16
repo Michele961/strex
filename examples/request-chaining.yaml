@@ -1,0 +1,66 @@
+name: Request chaining demo
+version: "1.0"
+
+# Demonstrates how to thread data across requests using variables and post_script.
+#
+# Chain pattern:
+#   Step 1 — Fetch a resource, extract a field with post_script → variables.set(...)
+#   Step 2 — Use that value in the URL or body with {{variableName}}
+#   Step 3 — Use another extracted value for a third hop
+#
+# Scenario: look up a user, find one of their posts, then fetch the comments on that post.
+# Each step depends on data returned by the previous one — no ids are hardcoded.
+#
+# Uses JSONPlaceholder, a free public API for testing. https://jsonplaceholder.typicode.com
+environment:
+  baseUrl: https://jsonplaceholder.typicode.com
+
+variables:
+  userId: null
+  postId: null
+
+requests:
+  # ── Step 1 ──────────────────────────────────────────────────────────────────
+  # Fetch a user. Extract their id into userId so the next request can use it.
+  - name: Get user
+    method: GET
+    url: "{{baseUrl}}/users/1"
+    assertions:
+      - status: 200
+      - jsonPath: "$.id"
+        exists: true
+    post_script: |
+      const user = response.json();
+      variables.set("userId", String(user.id));
+      console.log("userId →", user.id);
+
+  # ── Step 2 ──────────────────────────────────────────────────────────────────
+  # Fetch posts authored by that user. The {{userId}} in the query string is
+  # resolved at runtime from the variable set in step 1.
+  # Extract the first post's id so step 3 can target it directly.
+  - name: Get posts by user
+    method: GET
+    url: "{{baseUrl}}/posts?userId={{userId}}"
+    assertions:
+      - status: 200
+      - jsonPath: "$[0].userId"
+        equals: "{{userId}}"
+    post_script: |
+      const posts = response.json();
+      variables.set("postId", String(posts[0].id));
+      console.log("postId →", posts[0].id, "(", posts.length, "posts total)");
+
+  # ── Step 3 ──────────────────────────────────────────────────────────────────
+  # Fetch comments on the specific post identified in step 2.
+  # Both {{userId}} and {{postId}} are live in the variable scope at this point.
+  - name: Get post comments
+    method: GET
+    url: "{{baseUrl}}/posts/{{postId}}/comments"
+    assertions:
+      - status: 200
+      - jsonPath: "$[0].email"
+        exists: true
+    post_script: |
+      const comments = response.json();
+      console.log("postId", variables.get("postId"), "has", comments.length, "comments");
+      assert(comments.length > 0, "Expected at least one comment");

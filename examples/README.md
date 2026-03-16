@@ -54,6 +54,38 @@ strex validate examples/jsonplaceholder.yaml
 
 ---
 
+## `request-chaining.yaml`
+
+Demonstrates how to thread data between requests using `variables` and `post_script` — the core pattern for API flows where later requests depend on values returned by earlier ones.
+
+**What it covers:**
+
+| Concept | Where |
+|---------|-------|
+| `post_script` → `variables.set()` to extract a response field | steps 1, 2 |
+| `{{variableName}}` interpolation in URL and query string | steps 2, 3 |
+| `variables.get()` in a script | step 3 |
+| `assert()` for script-level assertions | step 3 |
+| Multi-hop chain: each request uses data from the previous | all steps |
+
+**Run it:**
+
+```bash
+strex run examples/request-chaining.yaml
+```
+
+Expected output:
+
+```
+GET  Get user           ✓
+GET  Get posts by user  ✓
+GET  Get post comments  ✓
+
+3 requests · 3 passed · 0 failed
+```
+
+---
+
 ## Adding your own examples
 
 To add an example:
