@@ -16,8 +16,16 @@ export type WsEvent =
       duration_ms: number
       failures: string[]
       error: string | null
+      response_body: string | null
+      response_headers: Record<string, string> | null
     }
-  | { type: 'run_finished'; passed: number; failed: number }
+  | {
+      type: 'run_finished'
+      passed: number
+      failed: number
+      total_duration_ms: number
+      avg_response_ms: number
+    }
   | { type: 'error'; message: string }
 
 export interface RequestResult {
@@ -28,4 +36,11 @@ export interface RequestResult {
   duration_ms: number
   failures: string[]
   error: string | null
+  response_body: string | null
+  response_headers: Record<string, string> | null
+}
+
+export interface RequestSequenceItem {
+  name: string
+  method: string
 }
