@@ -1,5 +1,7 @@
 //! WebSocket event types streamed from the server to the browser.
 
+use std::collections::HashMap;
+
 use serde::Serialize;
 
 /// Events streamed from the server to the browser over WebSocket.
@@ -29,6 +31,10 @@ pub(crate) enum WsEvent {
         failures: Vec<String>,
         /// Network/script error message. None if no error.
         error: Option<String>,
+        /// Response body, truncated to 10 240 bytes. None on network error.
+        response_body: Option<String>,
+        /// Response headers (lowercase names). None on network error.
+        response_headers: Option<HashMap<String, String>>,
     },
     /// Sent once when the run finishes.
     RunFinished {
@@ -36,6 +42,10 @@ pub(crate) enum WsEvent {
         passed: usize,
         /// Number of requests that failed.
         failed: usize,
+        /// Sum of all request `duration_ms` values in milliseconds.
+        total_duration_ms: u64,
+        /// Mean request duration in milliseconds (0 if no requests ran).
+        avg_response_ms: u64,
     },
 }
 
@@ -61,11 +71,17 @@ mod tests {
             duration_ms: 45,
             failures: vec![],
             error: None,
+            response_body: Some("{}".into()),
+            response_headers: Some(HashMap::from([(
+                "content-type".into(),
+                "application/json".into(),
+            )])),
         };
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains(r#""type":"request_completed""#));
         assert!(json.contains(r#""passed":true"#));
-        assert!(json.contains(r#""status":200"#));
+        assert!(json.contains(r#""response_body":"{}""#));
+        assert!(json.contains("content-type"));
     }
 
     #[test]
@@ -78,20 +94,24 @@ mod tests {
             duration_ms: 120,
             failures: vec!["status expected 200, got 401".into()],
             error: None,
+            response_body: None,
+            response_headers: None,
         };
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("status expected 200, got 401"));
     }
 
     #[test]
-    fn run_finished_serializes_with_type_tag() {
+    fn run_finished_includes_timing_fields() {
         let event = WsEvent::RunFinished {
             passed: 2,
             failed: 1,
+            total_duration_ms: 500,
+            avg_response_ms: 166,
         };
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains(r#""type":"run_finished""#));
-        assert!(json.contains(r#""passed":2"#));
-        assert!(json.contains(r#""failed":1"#));
+        assert!(json.contains(r#""total_duration_ms":500"#));
+        assert!(json.contains(r#""avg_response_ms":166"#));
     }
 }

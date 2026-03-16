@@ -149,10 +149,13 @@ async fn run_collection_and_stream(
             .await
             .map_err(|e| anyhow::anyhow!("Data-driven run failed: {e}"))?;
 
+        let mut total_duration_ms: u64 = 0;
         for iter in &result.iterations {
             for req_result in &iter.collection_result.request_results {
                 let (passed, status, failures, error) =
                     outcome_fields(&req_result.outcome, &req_result.response);
+
+                total_duration_ms += req_result.duration_ms;
 
                 // Look up the method from the request name in the collection iteration's result.
                 // We don't have the collection struct here, so we emit an empty method string —
@@ -170,17 +173,28 @@ async fn run_collection_and_stream(
                         duration_ms: req_result.duration_ms,
                         failures,
                         error,
+                        response_body: None,
+                        response_headers: None,
                     },
                 )
                 .await;
             }
         }
 
+        let total_requests = result.passed + result.failed;
+        let avg_response_ms = if total_requests > 0 {
+            total_duration_ms / total_requests as u64
+        } else {
+            0
+        };
+
         send_event(
             socket,
             WsEvent::RunFinished {
                 passed: result.passed,
                 failed: result.failed,
+                total_duration_ms,
+                avg_response_ms,
             },
         )
         .await;
@@ -201,6 +215,7 @@ async fn run_collection_and_stream(
 
         let mut passed_count = 0usize;
         let mut failed_count = 0usize;
+        let mut total_duration_ms: u64 = 0;
 
         for req_result in &col_result.request_results {
             let (passed, status, failures, error) =
@@ -211,6 +226,8 @@ async fn run_collection_and_stream(
             } else {
                 failed_count += 1;
             }
+
+            total_duration_ms += req_result.duration_ms;
 
             let method = method_map
                 .get(&req_result.name)
@@ -227,16 +244,27 @@ async fn run_collection_and_stream(
                     duration_ms: req_result.duration_ms,
                     failures,
                     error,
+                    response_body: None,
+                    response_headers: None,
                 },
             )
             .await;
         }
+
+        let total_requests = col_result.request_results.len();
+        let avg_response_ms = if total_requests > 0 {
+            total_duration_ms / total_requests as u64
+        } else {
+            0
+        };
 
         send_event(
             socket,
             WsEvent::RunFinished {
                 passed: passed_count,
                 failed: failed_count,
+                total_duration_ms,
+                avg_response_ms,
             },
         )
         .await;
