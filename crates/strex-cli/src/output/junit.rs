@@ -91,7 +91,6 @@ fn write_testsuite(
 ///
 /// The output starts with an XML declaration and wraps all suites in a
 /// `<testsuites>` root element.
-#[allow(dead_code)]
 pub fn print(result: &RunResult, writer: &mut impl Write) -> anyhow::Result<()> {
     writeln!(writer, r#"<?xml version="1.0" encoding="UTF-8"?>"#)?;
     writeln!(writer, r#"<testsuites>"#)?;
