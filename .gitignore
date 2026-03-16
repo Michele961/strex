@@ -4,6 +4,9 @@ target/
 # Worktrees (local development isolation)
 .worktrees/
 
+# Frontend build dependencies
+crates/strex-ui/frontend/node_modules/
+
 # IDE
 .idea/
 .vscode/
