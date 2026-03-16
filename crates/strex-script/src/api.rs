@@ -77,8 +77,18 @@ pub(crate) fn inject<'js>(
         // variables.get(key)
         {
             let mutations_c = Arc::clone(&mutations);
+            let deletions_c = Arc::clone(&deletions);
+            let cleared_c = Arc::clone(&cleared);
             let initial_c = initial_vars.clone();
             let f = Function::new(ctx.clone(), move |key: String| {
+                if *cleared_c.lock().unwrap_or_else(|e| e.into_inner()) {
+                    return rquickjs::Result::Ok(String::new());
+                }
+                let dels = deletions_c.lock().unwrap_or_else(|e| e.into_inner());
+                if dels.contains(&key) {
+                    return rquickjs::Result::Ok(String::new());
+                }
+                drop(dels);
                 let guard = mutations_c.lock().unwrap_or_else(|e| e.into_inner());
                 let val = guard
                     .get(&key)
@@ -93,8 +103,18 @@ pub(crate) fn inject<'js>(
         // variables.has(key)
         {
             let mutations_c = Arc::clone(&mutations);
+            let deletions_c = Arc::clone(&deletions);
+            let cleared_c = Arc::clone(&cleared);
             let initial_c = initial_vars.clone();
             let f = Function::new(ctx.clone(), move |key: String| {
+                if *cleared_c.lock().unwrap_or_else(|e| e.into_inner()) {
+                    return rquickjs::Result::Ok(false);
+                }
+                let dels = deletions_c.lock().unwrap_or_else(|e| e.into_inner());
+                if dels.contains(&key) {
+                    return rquickjs::Result::Ok(false);
+                }
+                drop(dels);
                 let guard = mutations_c.lock().unwrap_or_else(|e| e.into_inner());
                 let found = guard.contains_key(&key) || initial_c.contains_key(&key);
                 rquickjs::Result::Ok(found)
@@ -104,8 +124,13 @@ pub(crate) fn inject<'js>(
 
         // variables.delete(key)
         {
+            let mutations_c = Arc::clone(&mutations);
             let deletions_c = Arc::clone(&deletions);
             let f = Function::new(ctx.clone(), move |key: String| {
+                mutations_c
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .remove(&key);
                 deletions_c
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
@@ -117,21 +142,36 @@ pub(crate) fn inject<'js>(
 
         // variables.clear()
         {
+            let mutations_c = Arc::clone(&mutations);
             let cleared_c = Arc::clone(&cleared);
             let f = Function::new(ctx.clone(), move || {
+                mutations_c
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .clear();
                 *cleared_c.lock().unwrap_or_else(|e| e.into_inner()) = true;
                 rquickjs::Result::Ok(())
             })?;
             vars_obj.set("clear", f)?;
         }
 
-        // variables.keys() — union of initial keys and mutation keys
+        // variables.keys() — union of initial and mutation keys, excluding deleted/cleared
         {
             let mutations_c = Arc::clone(&mutations);
+            let deletions_c = Arc::clone(&deletions);
+            let cleared_c = Arc::clone(&cleared);
             let initial_c = initial_vars.clone();
             let f = Function::new(ctx.clone(), move || {
+                if *cleared_c.lock().unwrap_or_else(|e| e.into_inner()) {
+                    return rquickjs::Result::Ok(Vec::<String>::new());
+                }
+                let dels = deletions_c.lock().unwrap_or_else(|e| e.into_inner());
                 let guard = mutations_c.lock().unwrap_or_else(|e| e.into_inner());
-                let mut keys: Vec<String> = initial_c.keys().cloned().collect();
+                let mut keys: Vec<String> = initial_c
+                    .keys()
+                    .filter(|k| !dels.contains(k))
+                    .cloned()
+                    .collect();
                 for k in guard.keys() {
                     if !keys.contains(k) {
                         keys.push(k.clone());
