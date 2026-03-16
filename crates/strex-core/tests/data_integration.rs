@@ -99,6 +99,7 @@ fn simple_collection(url: &str) -> Collection {
             post_script: None,
             assertions: vec![],
             timeout: None,
+            on_failure: None,
         }],
     }
 }
@@ -127,6 +128,7 @@ fn collection_with_status_assertion(url: &str, code: u64) -> Collection {
             post_script: None,
             assertions: vec![assertion],
             timeout: None,
+            on_failure: None,
         }],
     }
 }

@@ -22,6 +22,7 @@ fn make_collection(req_name: &str) -> Collection {
             post_script: None,
             assertions: vec![],
             timeout: None,
+            on_failure: None,
         }],
     }
 }
@@ -113,6 +114,7 @@ fn special_chars_in_names_are_xml_escaped() {
             post_script: None,
             assertions: vec![],
             timeout: None,
+            on_failure: None,
         }],
     };
     let col_result = CollectionResult {

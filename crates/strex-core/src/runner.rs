@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use serde_yaml::Value as YamlValue;
 
 use crate::assertions;
-use crate::collection::{Body, BodyType, Collection};
+use crate::collection::{Body, BodyType, Collection, OnFailure};
 use crate::context::ExecutionContext;
 use crate::error::{AssertionFailure, AssertionType, RequestError};
 use crate::http::{self, ResolvedBody, ResolvedRequest};
@@ -23,14 +23,27 @@ impl CollectionResult {
     pub fn passed(&self) -> bool {
         self.request_results
             .iter()
-            .all(|r| matches!(r.outcome, RequestOutcome::Passed))
+            .all(|r| matches!(r.outcome, RequestOutcome::Passed | RequestOutcome::Skipped))
     }
 
-    /// Count of requests whose outcome is not `Passed`.
+    /// Count of requests whose outcome is `AssertionsFailed` or `Error`.
     pub fn failure_count(&self) -> usize {
         self.request_results
             .iter()
-            .filter(|r| !matches!(r.outcome, RequestOutcome::Passed))
+            .filter(|r| {
+                matches!(
+                    r.outcome,
+                    RequestOutcome::AssertionsFailed(_) | RequestOutcome::Error(_)
+                )
+            })
+            .count()
+    }
+
+    /// Count of requests whose outcome is [`RequestOutcome::Skipped`].
+    pub fn skipped_count(&self) -> usize {
+        self.request_results
+            .iter()
+            .filter(|r| matches!(r.outcome, RequestOutcome::Skipped))
             .count()
     }
 }
@@ -57,6 +70,9 @@ pub enum RequestOutcome {
     AssertionsFailed(Vec<AssertionFailure>),
     /// A stopping error occurred in phase 1, 2, or 3; subsequent phases were skipped.
     Error(RequestError),
+    /// This request was skipped because a prior request's `on_failure` action targeted it
+    /// or all remaining requests were aborted via `on_failure: stop`.
+    Skipped,
 }
 
 /// Runtime configuration for collection execution.
@@ -103,13 +119,67 @@ pub async fn execute_collection_with_opts(
     mut context: ExecutionContext,
     opts: RunnerOpts,
 ) -> CollectionResult {
+    let name_to_index: HashMap<&str, usize> = collection
+        .requests
+        .iter()
+        .enumerate()
+        .map(|(i, r)| (r.name.as_str(), i))
+        .collect();
+
     let mut results = Vec::with_capacity(collection.requests.len());
-    for request in &collection.requests {
-        results.push(execute_request(request, &mut context, &opts).await);
+    let mut skip_until: Option<usize> = None;
+    let mut i = 0;
+
+    while i < collection.requests.len() {
+        let request = &collection.requests[i];
+
+        if let Some(resume_at) = skip_until {
+            if i < resume_at {
+                results.push(RequestResult {
+                    name: request.name.clone(),
+                    outcome: RequestOutcome::Skipped,
+                    duration_ms: 0,
+                    response: None,
+                });
+                i += 1;
+                continue;
+            }
+            skip_until = None;
+        }
+
+        let result = execute_request(request, &mut context, &opts).await;
+
+        if is_failure(&result.outcome) {
+            if let Some(action) = &request.on_failure {
+                match action {
+                    OnFailure::Stop => {
+                        results.push(result);
+                        i += 1;
+                        while i < collection.requests.len() {
+                            results.push(RequestResult {
+                                name: collection.requests[i].name.clone(),
+                                outcome: RequestOutcome::Skipped,
+                                duration_ms: 0,
+                                response: None,
+                            });
+                            i += 1;
+                        }
+                        return CollectionResult { request_results: results };
+                    }
+                    OnFailure::SkipTo(target) => {
+                        if let Some(&target_idx) = name_to_index.get(target.as_str()) {
+                            skip_until = Some(target_idx);
+                        }
+                    }
+                }
+            }
+        }
+
+        results.push(result);
+        i += 1;
     }
-    CollectionResult {
-        request_results: results,
-    }
+
+    CollectionResult { request_results: results }
 }
 
 /// Run all requests sequentially, invoking `on_result` after each one completes.
@@ -130,16 +200,80 @@ where
     F: FnMut(&RequestResult) -> Fut,
     Fut: Future<Output = ()>,
 {
+    let name_to_index: HashMap<&str, usize> = collection
+        .requests
+        .iter()
+        .enumerate()
+        .map(|(i, r)| (r.name.as_str(), i))
+        .collect();
+
     let mut results = Vec::with_capacity(collection.requests.len());
     let mut context = context;
-    for request in &collection.requests {
+    let mut skip_until: Option<usize> = None;
+    let mut i = 0;
+
+    while i < collection.requests.len() {
+        let request = &collection.requests[i];
+
+        if let Some(resume_at) = skip_until {
+            if i < resume_at {
+                let result = RequestResult {
+                    name: request.name.clone(),
+                    outcome: RequestOutcome::Skipped,
+                    duration_ms: 0,
+                    response: None,
+                };
+                on_result(&result).await;
+                results.push(result);
+                i += 1;
+                continue;
+            }
+            skip_until = None;
+        }
+
         let result = execute_request(request, &mut context, &opts).await;
         on_result(&result).await;
+
+        if is_failure(&result.outcome) {
+            if let Some(action) = &request.on_failure {
+                match action {
+                    OnFailure::Stop => {
+                        results.push(result);
+                        i += 1;
+                        while i < collection.requests.len() {
+                            let skipped = RequestResult {
+                                name: collection.requests[i].name.clone(),
+                                outcome: RequestOutcome::Skipped,
+                                duration_ms: 0,
+                                response: None,
+                            };
+                            on_result(&skipped).await;
+                            results.push(skipped);
+                            i += 1;
+                        }
+                        return CollectionResult { request_results: results };
+                    }
+                    OnFailure::SkipTo(target) => {
+                        if let Some(&target_idx) = name_to_index.get(target.as_str()) {
+                            skip_until = Some(target_idx);
+                        }
+                    }
+                }
+            }
+        }
+
         results.push(result);
+        i += 1;
     }
-    CollectionResult {
-        request_results: results,
-    }
+
+    CollectionResult { request_results: results }
+}
+
+fn is_failure(outcome: &RequestOutcome) -> bool {
+    matches!(
+        outcome,
+        RequestOutcome::AssertionsFailed(_) | RequestOutcome::Error(_)
+    )
 }
 
 async fn execute_request(

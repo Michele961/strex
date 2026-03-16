@@ -7,7 +7,7 @@ use wiremock::matchers::{body_json, body_string, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use strex_core::{execute_collection, execute_collection_with_opts, RequestOutcome, RunnerOpts};
-use strex_core::{Body, BodyType, Collection, ExecutionContext, Request, RequestError};
+use strex_core::{Body, BodyType, Collection, ExecutionContext, OnFailure, Request, RequestError};
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -45,6 +45,7 @@ fn get(url: &str, assertions: Vec<HashMap<String, serde_yaml::Value>>) -> Reques
         post_script: None,
         assertions,
         timeout: Some(2000),
+        on_failure: None,
     }
 }
 
@@ -148,6 +149,7 @@ async fn post_request_with_json_body() {
             post_script: None,
             assertions: vec![status_assertion(201)],
             timeout: Some(2000),
+            on_failure: None,
         }],
     );
     let ctx = ExecutionContext::new(&col);
@@ -181,6 +183,7 @@ async fn post_request_with_form_body() {
             post_script: None,
             assertions: vec![status_assertion(200)],
             timeout: Some(2000),
+            on_failure: None,
         }],
     );
     let ctx = ExecutionContext::new(&col);
@@ -214,6 +217,7 @@ async fn post_request_with_text_body() {
             post_script: None,
             assertions: vec![status_assertion(200)],
             timeout: Some(2000),
+            on_failure: None,
         }],
     );
     let ctx = ExecutionContext::new(&col);
@@ -326,7 +330,6 @@ async fn variable_interpolation_in_url() {
 #[tokio::test]
 async fn network_error_captured_and_next_request_continues() {
     let server = MockServer::start().await;
-    // Only mount on /second — /first has no listener → connection error on non-existent port
     Mock::given(method("GET"))
         .and(path("/second"))
         .respond_with(ResponseTemplate::new(200))
@@ -334,9 +337,7 @@ async fn network_error_captured_and_next_request_continues() {
         .await;
 
     let col = collection(vec![
-        // First request points at a port that refuses connections
         get("http://127.0.0.1:1/first", vec![]),
-        // Second request points at the live mock server
         get(
             &format!("{}/second", server.uri()),
             vec![status_assertion(200)],
@@ -345,7 +346,6 @@ async fn network_error_captured_and_next_request_continues() {
     let ctx = ExecutionContext::new(&col);
     let result = execute_collection(&col, ctx).await;
 
-    // First request errored, second passed
     assert!(matches!(
         result.request_results[0].outcome,
         RequestOutcome::Error(_)
@@ -354,7 +354,6 @@ async fn network_error_captured_and_next_request_continues() {
         result.request_results[1].outcome,
         RequestOutcome::Passed
     ));
-    // Collection-level passed() is false because first request errored
     assert!(!result.passed());
 }
 
@@ -402,7 +401,8 @@ async fn request_timeout_captured() {
         pre_script: None,
         post_script: None,
         assertions: vec![],
-        timeout: Some(100), // 100ms — much less than 10s delay
+        timeout: Some(100),
+        on_failure: None,
     }]);
     let ctx = ExecutionContext::new(&col);
     let result = execute_collection(&col, ctx).await;
@@ -430,7 +430,6 @@ async fn response_captured_on_assertion_failure() {
     let ctx = ExecutionContext::new(&col);
     let result = execute_collection(&col, ctx).await;
 
-    // Assertion failed, but response is still captured
     assert!(matches!(
         result.request_results[0].outcome,
         RequestOutcome::AssertionsFailed(_)
@@ -464,6 +463,7 @@ async fn pre_script_sets_variable_used_in_url() {
             post_script: None,
             assertions: vec![status_assertion(200)],
             timeout: Some(2000),
+            on_failure: None,
         }],
     );
     let ctx = ExecutionContext::new(&col);
@@ -505,6 +505,7 @@ async fn post_script_extracts_token_used_in_next_request() {
             ),
             assertions: vec![status_assertion(200)],
             timeout: Some(2000),
+            on_failure: None,
         },
         Request {
             name: "get-profile".to_string(),
@@ -516,6 +517,7 @@ async fn post_script_extracts_token_used_in_next_request() {
             post_script: None,
             assertions: vec![status_assertion(200)],
             timeout: Some(2000),
+            on_failure: None,
         },
     ]);
     let ctx = ExecutionContext::new(&col);
@@ -551,6 +553,7 @@ async fn post_script_delete_removes_variable_from_next_request() {
                 post_script: Some(r#"variables.delete("key");"#.to_string()),
                 assertions: vec![],
                 timeout: Some(2000),
+                on_failure: None,
             },
             Request {
                 name: "second".to_string(),
@@ -559,12 +562,12 @@ async fn post_script_delete_removes_variable_from_next_request() {
                 headers: HashMap::new(),
                 body: None,
                 pre_script: None,
-                // Assert that the variable is actually absent — not just that the request passes.
                 post_script: Some(
                     r#"assert(!variables.has("key"), "key should have been deleted");"#.to_string(),
                 ),
                 assertions: vec![],
                 timeout: Some(2000),
+                on_failure: None,
             },
         ],
     );
@@ -603,6 +606,7 @@ async fn pre_script_error_stops_request_next_continues() {
             post_script: None,
             assertions: vec![],
             timeout: Some(2000),
+            on_failure: None,
         },
         Request {
             name: "ok".to_string(),
@@ -614,6 +618,7 @@ async fn pre_script_error_stops_request_next_continues() {
             post_script: None,
             assertions: vec![status_assertion(200)],
             timeout: Some(2000),
+            on_failure: None,
         },
     ]);
 
@@ -650,6 +655,7 @@ async fn post_script_runtime_error_stops_request_response_captured() {
         post_script: Some(r#"throw new Error("post-script boom");"#.to_string()),
         assertions: vec![],
         timeout: Some(2000),
+        on_failure: None,
     }]);
 
     let ctx = ExecutionContext::new(&col);
@@ -685,6 +691,7 @@ async fn script_timeout_produces_timeout_error() {
         post_script: None,
         assertions: vec![],
         timeout: Some(2000),
+        on_failure: None,
     }]);
 
     let ctx = ExecutionContext::new(&col);
@@ -726,6 +733,7 @@ async fn continue_on_script_error_collects_assert_failure() {
         ),
         assertions: vec![status_assertion(200)],
         timeout: Some(2000),
+        on_failure: None,
     }]);
 
     let ctx = ExecutionContext::new(&col);
@@ -773,6 +781,7 @@ async fn isolate_script_variables_prevents_mutation_leaking() {
                 post_script: Some(r#"variables.set("key", "mutated");"#.to_string()),
                 assertions: vec![status_assertion(200)],
                 timeout: Some(2000),
+                on_failure: None,
             },
             Request {
                 name: "second".to_string(),
@@ -784,6 +793,7 @@ async fn isolate_script_variables_prevents_mutation_leaking() {
                 post_script: None,
                 assertions: vec![status_assertion(200)],
                 timeout: Some(2000),
+                on_failure: None,
             },
         ],
     );
@@ -831,6 +841,7 @@ async fn post_script_variables_clear_removes_all_for_next_request() {
                 ),
                 assertions: vec![status_assertion(200)],
                 timeout: Some(2000),
+                on_failure: None,
             },
             Request {
                 name: "second".to_string(),
@@ -849,6 +860,7 @@ async fn post_script_variables_clear_removes_all_for_next_request() {
                 ),
                 assertions: vec![status_assertion(200)],
                 timeout: Some(2000),
+                on_failure: None,
             },
         ],
     );
@@ -884,10 +896,223 @@ async fn post_script_can_read_response_timing_total() {
         ),
         assertions: vec![status_assertion(200)],
         timeout: Some(2000),
+        on_failure: None,
     }]);
 
     let ctx = ExecutionContext::new(&col);
     let result = execute_collection(&col, ctx).await;
 
     assert!(result.passed(), "{:?}", result);
+}
+
+// ── on_failure tests ──────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn on_failure_stop_skips_remaining_requests() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/fail"))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/ok"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+
+    let col = collection(vec![
+        Request {
+            name: "step-1".to_string(),
+            method: "GET".to_string(),
+            url: format!("{}/fail", server.uri()),
+            headers: HashMap::new(),
+            body: None,
+            pre_script: None,
+            post_script: None,
+            assertions: vec![status_assertion(200)],
+            timeout: Some(2000),
+            on_failure: Some(OnFailure::Stop),
+        },
+        Request {
+            name: "step-2".to_string(),
+            method: "GET".to_string(),
+            url: format!("{}/ok", server.uri()),
+            headers: HashMap::new(),
+            body: None,
+            pre_script: None,
+            post_script: None,
+            assertions: vec![status_assertion(200)],
+            timeout: Some(2000),
+            on_failure: None,
+        },
+        Request {
+            name: "step-3".to_string(),
+            method: "GET".to_string(),
+            url: format!("{}/ok", server.uri()),
+            headers: HashMap::new(),
+            body: None,
+            pre_script: None,
+            post_script: None,
+            assertions: vec![status_assertion(200)],
+            timeout: Some(2000),
+            on_failure: None,
+        },
+    ]);
+
+    let ctx = ExecutionContext::new(&col);
+    let result = execute_collection(&col, ctx).await;
+
+    assert!(
+        matches!(
+            result.request_results[0].outcome,
+            RequestOutcome::AssertionsFailed(_)
+        ),
+        "step-1 should fail"
+    );
+    assert!(
+        matches!(result.request_results[1].outcome, RequestOutcome::Skipped),
+        "step-2 should be skipped"
+    );
+    assert!(
+        matches!(result.request_results[2].outcome, RequestOutcome::Skipped),
+        "step-3 should be skipped"
+    );
+    assert_eq!(result.failure_count(), 1);
+    assert_eq!(result.skipped_count(), 2);
+}
+
+#[tokio::test]
+async fn on_failure_skip_to_jumps_over_named_request() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/fail"))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/ok"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+
+    let col = collection(vec![
+        Request {
+            name: "step-1".to_string(),
+            method: "GET".to_string(),
+            url: format!("{}/fail", server.uri()),
+            headers: HashMap::new(),
+            body: None,
+            pre_script: None,
+            post_script: None,
+            assertions: vec![status_assertion(200)],
+            timeout: Some(2000),
+            on_failure: Some(OnFailure::SkipTo("step-3".to_string())),
+        },
+        Request {
+            name: "step-2".to_string(),
+            method: "GET".to_string(),
+            url: format!("{}/ok", server.uri()),
+            headers: HashMap::new(),
+            body: None,
+            pre_script: None,
+            post_script: None,
+            assertions: vec![status_assertion(200)],
+            timeout: Some(2000),
+            on_failure: None,
+        },
+        Request {
+            name: "step-3".to_string(),
+            method: "GET".to_string(),
+            url: format!("{}/ok", server.uri()),
+            headers: HashMap::new(),
+            body: None,
+            pre_script: None,
+            post_script: None,
+            assertions: vec![status_assertion(200)],
+            timeout: Some(2000),
+            on_failure: None,
+        },
+    ]);
+
+    let ctx = ExecutionContext::new(&col);
+    let result = execute_collection(&col, ctx).await;
+
+    assert!(
+        matches!(
+            result.request_results[0].outcome,
+            RequestOutcome::AssertionsFailed(_)
+        ),
+        "step-1 should fail"
+    );
+    assert!(
+        matches!(result.request_results[1].outcome, RequestOutcome::Skipped),
+        "step-2 should be skipped"
+    );
+    assert!(
+        matches!(result.request_results[2].outcome, RequestOutcome::Passed),
+        "step-3 should pass"
+    );
+    assert_eq!(result.failure_count(), 1);
+    assert_eq!(result.skipped_count(), 1);
+}
+
+#[test]
+fn on_failure_stop_parsed_from_yaml() {
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    let yaml = r#"
+name: on_failure stop test
+version: "1.0"
+requests:
+  - name: step-1
+    method: GET
+    url: https://example.com
+    assertions:
+      - status: 999
+    on_failure: stop
+  - name: step-2
+    method: GET
+    url: https://example.com
+    assertions:
+      - status: 200
+"#;
+    let mut f = NamedTempFile::new().unwrap();
+    f.write_all(yaml.as_bytes()).unwrap();
+    let col = strex_core::parse_collection(f.path()).unwrap();
+    assert!(matches!(col.requests[0].on_failure, Some(OnFailure::Stop)));
+    assert!(col.requests[1].on_failure.is_none());
+}
+
+#[test]
+fn on_failure_skip_to_parsed_from_yaml() {
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    let yaml = r#"
+name: on_failure skip_to test
+version: "1.0"
+requests:
+  - name: step-1
+    method: GET
+    url: https://example.com
+    assertions:
+      - status: 999
+    on_failure:
+      skip_to: step-3
+  - name: step-2
+    method: GET
+    url: https://example.com
+  - name: step-3
+    method: GET
+    url: https://example.com
+"#;
+    let mut f = NamedTempFile::new().unwrap();
+    f.write_all(yaml.as_bytes()).unwrap();
+    let col = strex_core::parse_collection(f.path()).unwrap();
+    assert!(matches!(
+        col.requests[0].on_failure,
+        Some(OnFailure::SkipTo(ref s)) if s == "step-3"
+    ));
 }

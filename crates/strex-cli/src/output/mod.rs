@@ -107,6 +107,7 @@ mod tests {
                 post_script: None,
                 assertions: vec![],
                 timeout: None,
+                on_failure: None,
             }],
         }
     }

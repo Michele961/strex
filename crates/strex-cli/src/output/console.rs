@@ -39,11 +39,23 @@ pub fn print(result: &RunResult, writer: &mut impl Write) -> anyhow::Result<()> 
                 .iter()
                 .filter(|r| matches!(r.outcome, RequestOutcome::Passed))
                 .count();
-            let failed = total - passed;
-            writeln!(
-                writer,
-                "\n{total} requests · {passed} passed · {failed} failed"
-            )?;
+            let skipped = col_result
+                .request_results
+                .iter()
+                .filter(|r| matches!(r.outcome, RequestOutcome::Skipped))
+                .count();
+            let failed = total - passed - skipped;
+            if skipped > 0 {
+                writeln!(
+                    writer,
+                    "\n{total} requests · {passed} passed · {failed} failed · {skipped} skipped"
+                )?;
+            } else {
+                writeln!(
+                    writer,
+                    "\n{total} requests · {passed} passed · {failed} failed"
+                )?;
+            }
         }
         RunOutcome::DataDriven(data_result) => {
             for iter_result in &data_result.iterations {
@@ -101,6 +113,7 @@ fn print_request(
 ) -> anyhow::Result<()> {
     let symbol = match outcome {
         RequestOutcome::Passed => "✓",
+        RequestOutcome::Skipped => "-",
         _ => "✗",
     };
     writeln!(writer, "{method:<method_width$}  {name}  {symbol}")?;
@@ -113,7 +126,7 @@ fn print_request(
         RequestOutcome::Error(e) => {
             writeln!(writer, "    error: {e}")?;
         }
-        RequestOutcome::Passed => {}
+        RequestOutcome::Passed | RequestOutcome::Skipped => {}
     }
     Ok(())
 }
@@ -144,6 +157,7 @@ mod tests {
                 post_script: None,
                 assertions: vec![],
                 timeout: None,
+                on_failure: None,
             }],
         }
     }

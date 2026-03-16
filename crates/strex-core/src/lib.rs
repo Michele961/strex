@@ -10,7 +10,7 @@ mod interpolation;
 mod parser;
 mod runner;
 
-pub use collection::{Body, BodyType, Collection, Request};
+pub use collection::{Body, BodyType, Collection, OnFailure, Request};
 pub use context::ExecutionContext;
 pub use data::{
     parse_csv, parse_json, run_collection_with_data, DataError, DataRow, DataRunOpts,

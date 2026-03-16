@@ -61,7 +61,6 @@ fn write_testsuite(
                 writeln!(writer, r#"    <testcase name="{}"/>"#, escaped_name)?;
             }
             RequestOutcome::AssertionsFailed(assertion_failures) => {
-                // Use the first failure's message; subsequent failures are omitted per spec.
                 let msg = assertion_failures
                     .first()
                     .map(|f| escape_xml(&format_failure(f)))
@@ -74,6 +73,11 @@ fn write_testsuite(
                 let msg = escape_xml(&e.to_string());
                 writeln!(writer, r#"    <testcase name="{}">"#, escaped_name)?;
                 writeln!(writer, r#"      <error message="{}"/>"#, msg)?;
+                writeln!(writer, r#"    </testcase>"#)?;
+            }
+            RequestOutcome::Skipped => {
+                writeln!(writer, r#"    <testcase name="{}">"#, escaped_name)?;
+                writeln!(writer, r#"      <skipped/>"#)?;
                 writeln!(writer, r#"    </testcase>"#)?;
             }
         }

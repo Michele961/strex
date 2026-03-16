@@ -22,13 +22,18 @@ fn build_json(result: &RunResult) -> serde_json::Value {
                 .iter()
                 .filter(|r| matches!(r.outcome, RequestOutcome::Passed))
                 .count();
-            let failed = col_result.request_results.len() - passed;
+            let skipped = col_result
+                .request_results
+                .iter()
+                .filter(|r| matches!(r.outcome, RequestOutcome::Skipped))
+                .count();
+            let failed = col_result.request_results.len() - passed - skipped;
             let requests: Vec<serde_json::Value> = col_result
                 .request_results
                 .iter()
                 .map(request_to_json)
                 .collect();
-            serde_json::json!({ "passed": passed, "failed": failed, "requests": requests })
+            serde_json::json!({ "passed": passed, "failed": failed, "skipped": skipped, "requests": requests })
         }
         RunOutcome::DataDriven(data_result) => {
             let iterations: Vec<serde_json::Value> = data_result
@@ -75,6 +80,7 @@ fn request_to_json(req_result: &RequestResult) -> serde_json::Value {
         RequestOutcome::Passed => serde_json::json!({
             "name": req_result.name,
             "passed": true,
+            "skipped": false,
             "status": status,
             "assertions": [],
         }),
@@ -86,6 +92,7 @@ fn request_to_json(req_result: &RequestResult) -> serde_json::Value {
             serde_json::json!({
                 "name": req_result.name,
                 "passed": false,
+                "skipped": false,
                 "status": status,
                 "assertions": assertions,
             })
@@ -93,8 +100,16 @@ fn request_to_json(req_result: &RequestResult) -> serde_json::Value {
         RequestOutcome::Error(e) => serde_json::json!({
             "name": req_result.name,
             "passed": false,
+            "skipped": false,
             "status": status,
             "error": e.to_string(),
+            "assertions": [],
+        }),
+        RequestOutcome::Skipped => serde_json::json!({
+            "name": req_result.name,
+            "passed": false,
+            "skipped": true,
+            "status": serde_json::Value::Null,
             "assertions": [],
         }),
     }
@@ -126,6 +141,7 @@ mod tests {
                 post_script: None,
                 assertions: vec![],
                 timeout: None,
+                on_failure: None,
             }],
         }
     }

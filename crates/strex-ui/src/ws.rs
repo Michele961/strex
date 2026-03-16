@@ -444,6 +444,16 @@ fn outcome_fields(outcome: &RequestOutcome, response: &Option<HttpResponse>) -> 
             request_body,
             url,
         ),
+        RequestOutcome::Skipped => (
+            false,
+            status,
+            vec![],
+            Some("skipped".to_string()),
+            response_body,
+            response_headers,
+            request_body,
+            url,
+        ),
     }
 }
 
