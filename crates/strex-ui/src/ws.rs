@@ -88,7 +88,7 @@ fn truncate_body(body: &str) -> String {
         let boundary = (0..=BODY_LIMIT)
             .rev()
             .find(|&i| body.is_char_boundary(i))
-            .expect("index 0 is always a char boundary");
+            .unwrap_or(0); // unreachable: is_char_boundary(0) is always true for any &str
         format!("{} [truncated]", &body[..boundary])
     }
 }
