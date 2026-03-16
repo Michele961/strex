@@ -20,15 +20,23 @@ strex is an open-source alternative to Postman's Collection Runner — no GUI, n
 
 ## Install
 
+**macOS and Linux — Homebrew (recommended):**
+
 ```bash
-# From source (requires Rust stable)
-git clone https://github.com/your-org/strex
+brew tap Michele961/strex
+brew install strex
+```
+
+**From source** (requires Rust stable):
+
+```bash
+git clone https://github.com/Michele961/strex
 cd strex
 cargo build --release
 # Binary at: ./target/release/strex
 ```
 
-> `cargo install strex` will be available once the crate is published to crates.io.
+Pre-built binaries for macOS (Intel + Apple Silicon) and Linux (x86_64 + ARM64) are attached to every [GitHub Release](https://github.com/Michele961/strex/releases).
 
 ---
 
@@ -143,6 +151,7 @@ strex validate api.yaml
 
 - [CLI reference and tutorial](docs/user/CLI.md) — all commands, flags, collection format, output formats
 - [Developer onboarding](docs/dev/ONBOARDING.md) — building from source, crate map, running tests
+- [Examples](examples/README.md) — runnable collections against public APIs
 
 ---
 

@@ -1,0 +1,100 @@
+name: JSONPlaceholder demo
+version: "1.0"
+
+# JSONPlaceholder is a free public REST API for testing and prototyping.
+# No authentication required. https://jsonplaceholder.typicode.com
+environment:
+  baseUrl: https://jsonplaceholder.typicode.com
+
+# Holds values extracted from one request and used by the next.
+variables:
+  userId: null
+  username: null
+  postId: null
+
+requests:
+  # ── Step 1 ──────────────────────────────────────────────────────────────────
+  # Fetch a user and extract their id and username into collection variables.
+  # These variables are then available to every subsequent request.
+  - name: Get user
+    method: GET
+    url: "{{baseUrl}}/users/1"
+    assertions:
+      - status: 200
+      - jsonPath: "$.id"
+        exists: true
+      - jsonPath: "$.email"
+        exists: true
+    post_script: |
+      const user = response.json();
+      variables.set("userId", String(user.id));
+      variables.set("username", user.username);
+      console.log("Fetched user:", user.username, "(id=" + user.id + ")");
+
+  # ── Step 2 ──────────────────────────────────────────────────────────────────
+  # Fetch posts for the user we just retrieved.
+  # The userId variable was set by the previous post_script.
+  - name: Get posts by user
+    method: GET
+    url: "{{baseUrl}}/posts?userId={{userId}}"
+    assertions:
+      - status: 200
+      - jsonPath: "$[0].userId"
+        equals: "1"
+      - jsonPath: "$[0].id"
+        exists: true
+    post_script: |
+      const posts = response.json();
+      // Grab the first post's id for the next request
+      variables.set("postId", String(posts[0].id));
+      console.log("Found", posts.length, "posts. Using post id:", posts[0].id);
+
+  # ── Step 3 ──────────────────────────────────────────────────────────────────
+  # Create a new post attributed to our user.
+  # JSONPlaceholder simulates creation — it always returns 201 with a fake id.
+  - name: Create post
+    method: POST
+    url: "{{baseUrl}}/posts"
+    headers:
+      Content-Type: application/json
+    body:
+      type: json
+      content:
+        title: "Hello from {{username}}"
+        body: A post created by strex during testing.
+        userId: 1
+    assertions:
+      - status: 201
+      - jsonPath: "$.id"
+        exists: true
+      - jsonPath: "$.title"
+        contains: "{{username}}"
+    post_script: |
+      const created = response.json();
+      console.log("Created post with id:", created.id);
+
+  # ── Step 4 ──────────────────────────────────────────────────────────────────
+  # Fetch a specific post by the id we stored in step 2.
+  - name: Get post by id
+    method: GET
+    url: "{{baseUrl}}/posts/{{postId}}"
+    assertions:
+      - status: 200
+      - jsonPath: "$.id"
+        exists: true
+      - jsonPath: "$.title"
+        exists: true
+
+  # ── Step 5 ──────────────────────────────────────────────────────────────────
+  # Fetch comments on that post.
+  - name: Get post comments
+    method: GET
+    url: "{{baseUrl}}/posts/{{postId}}/comments"
+    assertions:
+      - status: 200
+      - jsonPath: "$[0].email"
+        exists: true
+    post_script: |
+      const comments = response.json();
+      console.log("Post has", comments.length, "comments");
+      assert(comments.length > 0, "Expected at least one comment on the post");

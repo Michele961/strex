@@ -2,6 +2,10 @@
 name = "strex-cli"
 version = "0.1.0"
 edition = "2021"
+repository = "https://github.com/Michele961/strex"
+homepage = "https://github.com/Michele961/strex"
+description = "CLI-first API collection runner"
+license = "MIT"
 
 [[bin]]
 name = "strex"
