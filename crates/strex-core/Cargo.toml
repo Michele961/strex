@@ -40,3 +40,6 @@ wiremock = "0.6"
 
 # Async test support (rt-multi-thread for #[tokio::test])
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+
+# Temporary file creation for parser regression tests
+tempfile = "3"

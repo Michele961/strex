@@ -360,6 +360,32 @@ mod tests {
         assert!(scan_for_duplicate_keys(yaml).is_ok());
     }
 
+    #[test]
+    fn two_requests_with_same_field_names_are_valid() {
+        let yaml = r#"
+name: Multi Request
+version: "1.0"
+requests:
+  - name: First Request
+    method: GET
+    url: https://example.com/first
+  - name: Second Request
+    method: GET
+    url: https://example.com/second
+"#;
+        // Write to a temp file and parse
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+        let mut f = NamedTempFile::new().unwrap();
+        f.write_all(yaml.as_bytes()).unwrap();
+        let result = crate::parse_collection(f.path());
+        assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
+        let col = result.unwrap();
+        assert_eq!(col.requests.len(), 2);
+        assert_eq!(col.requests[0].name, "First Request");
+        assert_eq!(col.requests[1].name, "Second Request");
+    }
+
     // --- validate_max_depth ---
 
     #[test]
