@@ -1,23 +1,72 @@
 <script lang="ts">
-  let message = $state('strex UI loading...')
+  import { connectRun } from './lib/ws'
+  import type { RunConfig, RequestResult, WsEvent } from './lib/types'
+  import ConfigPanel from './components/ConfigPanel.svelte'
+  import ResultsPanel from './components/ResultsPanel.svelte'
+
+  let running = $state(false)
+  let results = $state<RequestResult[]>([])
+  let total = $state(0)
+  let summary = $state<{ passed: number; failed: number } | null>(null)
+
+  function handleRun(config: RunConfig) {
+    results = []
+    summary = null
+    total = 0
+    running = true
+
+    connectRun(
+      config,
+      (event: WsEvent) => {
+        if (event.type === 'run_started') {
+          total = event.total
+        } else if (event.type === 'request_completed') {
+          results = [
+            ...results,
+            {
+              name: event.name,
+              method: event.method,
+              passed: event.passed,
+              status: event.status,
+              duration_ms: event.duration_ms,
+              failures: event.failures,
+              error: event.error,
+            },
+          ]
+        } else if (event.type === 'run_finished') {
+          summary = { passed: event.passed, failed: event.failed }
+          running = false
+        } else if (event.type === 'error') {
+          console.error('Run error:', event.message)
+          running = false
+        }
+      },
+      () => {
+        running = false
+      }
+    )
+  }
 </script>
 
 <div class="app">
-  <p>{message}</p>
+  <ConfigPanel onRun={handleRun} {running} />
+  <ResultsPanel {results} {running} {total} {summary} />
 </div>
 
 <style>
+  :global(*, *::before, *::after) {
+    box-sizing: border-box;
+  }
+
   :global(body) {
     margin: 0;
-    font-family: system-ui, sans-serif;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
     background: #13132b;
-    color: #e0e0e0;
   }
 
   .app {
     display: flex;
     height: 100vh;
-    align-items: center;
-    justify-content: center;
+    overflow: hidden;
   }
 </style>
