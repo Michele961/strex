@@ -24,3 +24,5 @@ serde_yaml = "0.9"
 [dev-dependencies]
 # Temporary files for validate integration tests
 tempfile = "3"
+# HTTP mock server for run subcommand integration tests
+wiremock = "0.6"

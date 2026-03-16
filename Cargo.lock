@@ -1259,6 +1259,7 @@ dependencies = [
  "strex-core",
  "tempfile",
  "tokio",
+ "wiremock",
 ]
 
 [[package]]
