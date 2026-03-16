@@ -89,19 +89,13 @@ fn display_body(body: &ResolvedBody) -> String {
 ///
 /// HTTP 4xx/5xx status codes are **not** errors — they are returned as `Ok(HttpResponse)`.
 /// Only transport-level failures (DNS, TLS, timeout, etc.) return `Err`.
-///
-/// A new `reqwest::Client` is built per call (connection pooling deferred to SP5).
-pub(crate) async fn send(request: &ResolvedRequest) -> Result<HttpResponse, RequestError> {
+pub(crate) async fn send(
+    client: &reqwest::Client,
+    request: &ResolvedRequest,
+) -> Result<HttpResponse, RequestError> {
     use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 
     let url = &request.url;
-
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_millis(request.timeout_ms))
-        .build()
-        .map_err(|e| RequestError::Network {
-            cause: e.to_string(),
-        })?;
 
     let method = reqwest::Method::from_bytes(request.method.as_bytes()).map_err(|e| {
         RequestError::InvalidBody {
@@ -120,7 +114,9 @@ pub(crate) async fn send(request: &ResolvedRequest) -> Result<HttpResponse, Requ
             header_map.insert(n, v);
         }
     }
-    req = req.headers(header_map);
+    req = req
+        .headers(header_map)
+        .timeout(std::time::Duration::from_millis(request.timeout_ms));
 
     let request_body: Option<String> = request.body.as_ref().map(display_body);
 
@@ -253,6 +249,10 @@ mod tests {
         }
     }
 
+    fn make_client() -> reqwest::Client {
+        reqwest::Client::builder().build().unwrap()
+    }
+
     #[test]
     fn display_body_text_returns_raw_string() {
         let body = ResolvedBody::Text("hello world".to_string());
@@ -295,8 +295,9 @@ mod tests {
             .mount(&server)
             .await;
 
+        let client = make_client();
         let req = make_get(&format!("{}/ok", server.uri()));
-        let resp = send(&req).await.expect("send should succeed");
+        let resp = send(&client, &req).await.expect("send should succeed");
 
         assert_eq!(resp.status, 200);
         assert_eq!(resp.body, "hello");
@@ -311,8 +312,9 @@ mod tests {
             .mount(&server)
             .await;
 
+        let client = make_client();
         let req = make_get(&format!("{}/headers", server.uri()));
-        let resp = send(&req).await.unwrap();
+        let resp = send(&client, &req).await.unwrap();
 
         assert!(
             resp.headers.contains_key("x-custom-header"),
@@ -331,8 +333,9 @@ mod tests {
             .mount(&server)
             .await;
 
+        let client = make_client();
         let req = make_get(&format!("{}/notfound", server.uri()));
-        let resp = send(&req).await.expect("404 should be Ok, not Err");
+        let resp = send(&client, &req).await.expect("404 should be Ok, not Err");
 
         assert_eq!(resp.status, 404);
     }
@@ -346,8 +349,9 @@ mod tests {
             .mount(&server)
             .await;
 
+        let client = make_client();
         let req = make_get(&format!("{}/slow", server.uri()));
-        let err = send(&req).await.expect_err("should timeout");
+        let err = send(&client, &req).await.expect_err("should timeout");
 
         assert!(
             matches!(err, RequestError::Timeout { .. }),
@@ -357,9 +361,9 @@ mod tests {
 
     #[tokio::test]
     async fn connection_refused_produces_error() {
-        // Port 1 is never listening — guaranteed connection refused on all OSes.
+        let client = make_client();
         let req = make_get("http://127.0.0.1:1/test");
-        let err = send(&req).await.expect_err("should fail");
+        let err = send(&client, &req).await.expect_err("should fail");
 
         assert!(
             matches!(
@@ -379,14 +383,12 @@ mod tests {
             .mount(&server)
             .await;
 
+        let client = make_client();
         let req = make_get(&format!("{}/timed", server.uri()));
-        let resp = send(&req).await.expect("should succeed");
+        let resp = send(&client, &req).await.expect("should succeed");
 
-        // wait_ms and receive_ms should be measurable (even if tiny)
-        // dns_ms, connect_ms, tls_ms may be 0 (not captured in SP3)
         assert!(resp.timing.wait_ms < 10_000, "wait_ms sanity check");
         assert!(resp.timing.receive_ms < 10_000, "receive_ms sanity check");
-        // total_ms is set by the runner, not send() — should be 0 here
         assert_eq!(resp.timing.total_ms, 0);
     }
 }

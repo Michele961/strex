@@ -24,4 +24,4 @@ pub use runner::{
     execute_collection, execute_collection_streaming, execute_collection_with_opts,
     CollectionResult, RequestOutcome, RequestResult, RunnerOpts,
 };
-pub use strex_script::ScriptError;
+pub use strex_script::{ConsoleEntry, LogLevel, ScriptError};

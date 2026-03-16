@@ -699,6 +699,7 @@ async fn script_timeout_produces_timeout_error() {
         script_timeout_ms: 200,
         isolate_script_variables: false,
         continue_on_script_error: false,
+        ..RunnerOpts::default()
     };
     let result = execute_collection_with_opts(&col, ctx, opts).await;
 
@@ -741,6 +742,7 @@ async fn continue_on_script_error_collects_assert_failure() {
         script_timeout_ms: 5_000,
         isolate_script_variables: false,
         continue_on_script_error: true,
+        ..RunnerOpts::default()
     };
     let result = execute_collection_with_opts(&col, ctx, opts).await;
 
@@ -803,6 +805,7 @@ async fn isolate_script_variables_prevents_mutation_leaking() {
         script_timeout_ms: 5_000,
         isolate_script_variables: true,
         continue_on_script_error: false,
+        ..RunnerOpts::default()
     };
     let result = execute_collection_with_opts(&col, ctx, opts).await;
 

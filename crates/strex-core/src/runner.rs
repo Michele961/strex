@@ -59,6 +59,11 @@ pub struct RequestResult {
     pub duration_ms: u64,
     /// HTTP response captured in phase 4. `None` if a stopping error occurred before phase 3.
     pub response: Option<crate::http::HttpResponse>,
+    /// Console output emitted by pre- and post-request scripts, in emission order.
+    pub logs: Vec<strex_script::ConsoleEntry>,
+    /// Human-readable descriptions of declarative assertions that passed (e.g. "status 200").
+    /// Empty when the request errored, was skipped, or had no assertions.
+    pub passed_assertions: Vec<String>,
 }
 
 /// Outcome of a single request execution.
@@ -89,6 +94,13 @@ pub struct RunnerOpts {
     /// assertion failures (alongside declarative assertions).
     /// Default: `false` (`assert()` failures stop the request).
     pub continue_on_script_error: bool,
+    /// Shared HTTP client used for all requests in this run.
+    ///
+    /// A single `reqwest::Client` maintains a connection pool, enabling TCP and TLS
+    /// connection reuse across requests and concurrent iterations. Callers should
+    /// create one client per collection run and pass it here. `RunnerOpts::default()`
+    /// builds a fresh client automatically.
+    pub http_client: std::sync::Arc<reqwest::Client>,
 }
 
 impl Default for RunnerOpts {
@@ -97,6 +109,11 @@ impl Default for RunnerOpts {
             script_timeout_ms: 30_000,
             isolate_script_variables: false,
             continue_on_script_error: false,
+            http_client: std::sync::Arc::new(
+                reqwest::Client::builder()
+                    .build()
+                    .expect("default reqwest::Client build should never fail"),
+            ),
         }
     }
 }
@@ -140,6 +157,8 @@ pub async fn execute_collection_with_opts(
                     outcome: RequestOutcome::Skipped,
                     duration_ms: 0,
                     response: None,
+                    logs: vec![],
+                    passed_assertions: vec![],
                 });
                 i += 1;
                 continue;
@@ -161,6 +180,8 @@ pub async fn execute_collection_with_opts(
                                 outcome: RequestOutcome::Skipped,
                                 duration_ms: 0,
                                 response: None,
+                                logs: vec![],
+                                passed_assertions: vec![],
                             });
                             i += 1;
                         }
@@ -222,6 +243,8 @@ where
                     outcome: RequestOutcome::Skipped,
                     duration_ms: 0,
                     response: None,
+                    logs: vec![],
+                    passed_assertions: vec![],
                 };
                 on_result(&result).await;
                 results.push(result);
@@ -246,6 +269,8 @@ where
                                 outcome: RequestOutcome::Skipped,
                                 duration_ms: 0,
                                 response: None,
+                                logs: vec![],
+                                passed_assertions: vec![],
                             };
                             on_result(&skipped).await;
                             results.push(skipped);
@@ -283,6 +308,7 @@ async fn execute_request(
 ) -> RequestResult {
     let start = Instant::now();
     let name = request.name.clone();
+    let mut logs: Vec<strex_script::ConsoleEntry> = Vec::new();
 
     // Phase 1 — Snapshot current variables for use by pre-script.
     let mut vars = context.resolve_all();
@@ -298,6 +324,7 @@ async fn execute_request(
         };
         match run_script(script, script_ctx, opts).await {
             Ok(result) => {
+                logs.extend(result.console_logs.iter().cloned());
                 apply_mutations(context, result, opts.isolate_script_variables);
                 vars = context.resolve_all(); // re-merge after mutations
             }
@@ -307,6 +334,8 @@ async fn execute_request(
                     outcome: RequestOutcome::Error(RequestError::Script(e)),
                     duration_ms: start.elapsed().as_millis() as u64,
                     response: None,
+                    logs,
+                    passed_assertions: vec![],
                 };
             }
         }
@@ -321,12 +350,14 @@ async fn execute_request(
                 outcome: RequestOutcome::Error(e),
                 duration_ms: start.elapsed().as_millis() as u64,
                 response: None,
+                logs,
+                passed_assertions: vec![],
             };
         }
     };
 
     // Phase 3 — HTTP Execution / Phase 4 — Response Capture
-    let response = match http::send(&resolved).await {
+    let response = match http::send(&opts.http_client, &resolved).await {
         Ok(r) => r,
         Err(e) => {
             return RequestResult {
@@ -334,6 +365,8 @@ async fn execute_request(
                 outcome: RequestOutcome::Error(e),
                 duration_ms: start.elapsed().as_millis() as u64,
                 response: None,
+                logs,
+                passed_assertions: vec![],
             };
         }
     };
@@ -363,6 +396,7 @@ async fn execute_request(
         };
         match run_script(script, script_ctx, opts).await {
             Ok(result) => {
+                logs.extend(result.console_logs.iter().cloned());
                 apply_mutations(context, result, opts.isolate_script_variables);
             }
             Err(strex_script::ScriptError::AssertionFailed { message })
@@ -385,23 +419,28 @@ async fn execute_request(
                     outcome: RequestOutcome::Error(RequestError::Script(e)),
                     duration_ms: start.elapsed().as_millis() as u64,
                     response: Some(response),
+                    logs,
+                    passed_assertions: vec![],
                 };
             }
         }
     }
 
     // Phase 6 — Declarative Assertions
-    let mut failures = match assertions::evaluate(&request.assertions, &response, &vars) {
-        Ok(f) => f,
-        Err(e) => {
-            return RequestResult {
-                name,
-                outcome: RequestOutcome::Error(e),
-                duration_ms: start.elapsed().as_millis() as u64,
-                response: Some(response),
-            };
-        }
-    };
+    let (passed_assertions, mut failures) =
+        match assertions::evaluate(&request.assertions, &response, &vars) {
+            Ok((p, f)) => (p, f),
+            Err(e) => {
+                return RequestResult {
+                    name,
+                    outcome: RequestOutcome::Error(e),
+                    duration_ms: start.elapsed().as_millis() as u64,
+                    response: Some(response),
+                    logs,
+                    passed_assertions: vec![],
+                };
+            }
+        };
 
     failures.extend(script_assertion_failures);
 
@@ -424,6 +463,8 @@ async fn execute_request(
         outcome,
         duration_ms,
         response: Some(response),
+        logs,
+        passed_assertions,
     }
 }
 

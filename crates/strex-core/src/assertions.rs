@@ -35,7 +35,9 @@ enum HeaderCheck {
 /// String values in assertion maps (e.g. `equals: "{{token}}"`) are interpolated using `vars`
 /// — the flat map from `ExecutionContext::resolve_all()`.
 ///
-/// Returns `Ok(failures)` — a possibly-empty list. Execution always continues on `Ok`.
+/// Returns `Ok((passed, failures))` where `passed` is a list of human-readable descriptions
+/// for assertions that passed, and `failures` is a list of [`AssertionFailure`]s.
+/// Execution always continues on `Ok`.
 /// Returns `Err(RequestError::InvalidAssertion)` for malformed assertion maps.
 /// Returns `Err(RequestError::Interpolation)` if an assertion expected-value variable is unresolved.
 // Allow dead_code: called from runner.rs (Task 6) which is a stub at this stage.
@@ -44,15 +46,17 @@ pub(crate) fn evaluate(
     raw: &[HashMap<String, serde_yaml::Value>],
     response: &HttpResponse,
     vars: &HashMap<String, String>,
-) -> Result<Vec<AssertionFailure>, RequestError> {
+) -> Result<(Vec<String>, Vec<AssertionFailure>), RequestError> {
+    let mut passed = Vec::new();
     let mut failures = Vec::new();
     for map in raw {
         let assertion = parse_assertion_map(map, vars)?;
-        if let Some(failure) = check_assertion(&assertion, response) {
-            failures.push(failure);
+        match check_assertion(&assertion, response) {
+            None => passed.push(describe_assertion(&assertion)),
+            Some(failure) => failures.push(failure),
         }
     }
-    Ok(failures)
+    Ok((passed, failures))
 }
 
 #[allow(dead_code)]
@@ -171,6 +175,25 @@ fn yaml_scalar_to_string(val: &serde_yaml::Value) -> String {
         serde_yaml::Value::Bool(b) => b.to_string(),
         serde_yaml::Value::Null => String::new(),
         other => format!("{other:?}"),
+    }
+}
+
+#[allow(dead_code)]
+fn describe_assertion(assertion: &Assertion) -> String {
+    match assertion {
+        Assertion::Status(code) => format!("status {code}"),
+        Assertion::JsonPath { path, check } => match check {
+            JsonPathCheck::Exists(true) => format!("jsonPath {path} exists"),
+            JsonPathCheck::Exists(false) => format!("jsonPath {path} does not exist"),
+            JsonPathCheck::Equals(v) => format!("jsonPath {path} equals {v}"),
+            JsonPathCheck::Contains(v) => format!("jsonPath {path} contains {v}"),
+        },
+        Assertion::Header { name, check } => match check {
+            HeaderCheck::Exists(true) => format!("header {name} exists"),
+            HeaderCheck::Exists(false) => format!("header {name} does not exist"),
+            HeaderCheck::Equals(v) => format!("header {name} equals {v}"),
+            HeaderCheck::Contains(v) => format!("header {name} contains {v}"),
+        },
     }
 }
 
@@ -420,15 +443,17 @@ mod tests {
     fn status_assertion_passes_on_match() {
         let raw = vec![status_map(200)];
         let resp = response(200, "");
-        let failures = evaluate(&raw, &resp, &empty_vars()).unwrap();
+        let (passed, failures) = evaluate(&raw, &resp, &empty_vars()).unwrap();
         assert!(failures.is_empty());
+        assert_eq!(passed, vec!["status 200"]);
     }
 
     #[test]
     fn status_assertion_fails_on_mismatch() {
         let raw = vec![status_map(200)];
         let resp = response(404, "");
-        let failures = evaluate(&raw, &resp, &empty_vars()).unwrap();
+        let (passed, failures) = evaluate(&raw, &resp, &empty_vars()).unwrap();
+        assert!(passed.is_empty());
         assert_eq!(failures.len(), 1);
         assert_eq!(failures[0].assertion_type, AssertionType::Status);
         assert_eq!(failures[0].expected, "200");
@@ -442,8 +467,9 @@ mod tests {
             serde_yaml::Value::String("200".to_string()),
         )])];
         let resp = response(200, "");
-        let failures = evaluate(&raw, &resp, &empty_vars()).unwrap();
+        let (passed, failures) = evaluate(&raw, &resp, &empty_vars()).unwrap();
         assert!(failures.is_empty());
+        assert_eq!(passed, vec!["status 200"]);
     }
 
     #[test]
@@ -470,8 +496,9 @@ mod tests {
             serde_yaml::Value::Bool(true),
         )];
         let resp = response(200, r#"{"id": 1}"#);
-        let failures = evaluate(&raw, &resp, &empty_vars()).unwrap();
+        let (passed, failures) = evaluate(&raw, &resp, &empty_vars()).unwrap();
         assert!(failures.is_empty());
+        assert_eq!(passed, vec!["jsonPath $.id exists"]);
     }
 
     #[test]
@@ -482,7 +509,8 @@ mod tests {
             serde_yaml::Value::Bool(true),
         )];
         let resp = response(200, r#"{"id": 1}"#);
-        let failures = evaluate(&raw, &resp, &empty_vars()).unwrap();
+        let (passed, failures) = evaluate(&raw, &resp, &empty_vars()).unwrap();
+        assert!(passed.is_empty());
         assert_eq!(failures.len(), 1);
         assert_eq!(failures[0].assertion_type, AssertionType::JsonPath);
     }
@@ -496,8 +524,9 @@ mod tests {
             serde_yaml::Value::String("1".to_string()),
         )];
         let resp = response(200, r#"{"id": 1}"#);
-        let failures = evaluate(&raw, &resp, &empty_vars()).unwrap();
+        let (passed, failures) = evaluate(&raw, &resp, &empty_vars()).unwrap();
         assert!(failures.is_empty(), "{failures:?}");
+        assert_eq!(passed, vec!["jsonPath $.id equals 1"]);
     }
 
     #[test]
@@ -509,8 +538,9 @@ mod tests {
             serde_yaml::Value::String("John".to_string()),
         )];
         let resp = response(200, r#"{"name": "John"}"#);
-        let failures = evaluate(&raw, &resp, &empty_vars()).unwrap();
+        let (passed, failures) = evaluate(&raw, &resp, &empty_vars()).unwrap();
         assert!(failures.is_empty(), "{failures:?}");
+        assert_eq!(passed, vec!["jsonPath $.name equals John"]);
     }
 
     #[test]
@@ -521,7 +551,7 @@ mod tests {
             serde_yaml::Value::String("999".to_string()),
         )];
         let resp = response(200, r#"{"id": 1}"#);
-        let failures = evaluate(&raw, &resp, &empty_vars()).unwrap();
+        let (_, failures) = evaluate(&raw, &resp, &empty_vars()).unwrap();
         assert_eq!(failures.len(), 1);
     }
 
@@ -533,8 +563,9 @@ mod tests {
             serde_yaml::Value::String("@example.com".to_string()),
         )];
         let resp = response(200, r#"{"email": "user@example.com"}"#);
-        let failures = evaluate(&raw, &resp, &empty_vars()).unwrap();
+        let (passed, failures) = evaluate(&raw, &resp, &empty_vars()).unwrap();
         assert!(failures.is_empty(), "{failures:?}");
+        assert_eq!(passed, vec!["jsonPath $.email contains @example.com"]);
     }
 
     #[test]
@@ -545,8 +576,9 @@ mod tests {
             serde_yaml::Value::String("admin".to_string()),
         )];
         let resp = response(200, r#"{"tags": ["user", "admin", "editor"]}"#);
-        let failures = evaluate(&raw, &resp, &empty_vars()).unwrap();
+        let (passed, failures) = evaluate(&raw, &resp, &empty_vars()).unwrap();
         assert!(failures.is_empty(), "{failures:?}");
+        assert_eq!(passed, vec!["jsonPath $.tags contains admin"]);
     }
 
     #[test]
@@ -557,7 +589,7 @@ mod tests {
             serde_yaml::Value::Bool(true),
         )];
         let resp = response(200, "not json");
-        let failures = evaluate(&raw, &resp, &empty_vars()).unwrap();
+        let (_, failures) = evaluate(&raw, &resp, &empty_vars()).unwrap();
         assert_eq!(failures.len(), 1);
         assert!(
             failures[0].actual.contains("not valid JSON"),
@@ -576,8 +608,9 @@ mod tests {
             serde_yaml::Value::String("application/json".to_string()),
         )];
         let resp = response_with_header(200, "content-type", "application/json; charset=utf-8");
-        let failures = evaluate(&raw, &resp, &empty_vars()).unwrap();
+        let (passed, failures) = evaluate(&raw, &resp, &empty_vars()).unwrap();
         assert!(failures.is_empty(), "{failures:?}");
+        assert_eq!(passed, vec!["header content-type contains application/json"]);
     }
 
     #[test]
@@ -589,8 +622,9 @@ mod tests {
             serde_yaml::Value::String("application/json".to_string()),
         )];
         let resp = response_with_header(200, "content-type", "application/json");
-        let failures = evaluate(&raw, &resp, &empty_vars()).unwrap();
+        let (passed, failures) = evaluate(&raw, &resp, &empty_vars()).unwrap();
         assert!(failures.is_empty(), "{failures:?}");
+        assert_eq!(passed, vec!["header content-type equals application/json"]);
     }
 
     #[test]
@@ -601,8 +635,9 @@ mod tests {
             serde_yaml::Value::Bool(false),
         )];
         let resp = response(200, "");
-        let failures = evaluate(&raw, &resp, &empty_vars()).unwrap();
+        let (passed, failures) = evaluate(&raw, &resp, &empty_vars()).unwrap();
         assert!(failures.is_empty(), "{failures:?}");
+        assert_eq!(passed, vec!["header x-rate-limit does not exist"]);
     }
 
     // --- Interpolation in assertion values ---
@@ -616,8 +651,9 @@ mod tests {
         )];
         let resp = response(200, r#"{"name": "Alice"}"#);
         let vars = HashMap::from([("expected_name".to_string(), "Alice".to_string())]);
-        let failures = evaluate(&raw, &resp, &vars).unwrap();
+        let (passed, failures) = evaluate(&raw, &resp, &vars).unwrap();
         assert!(failures.is_empty(), "{failures:?}");
+        assert_eq!(passed, vec!["jsonPath $.name equals Alice"]);
     }
 
     #[test]
