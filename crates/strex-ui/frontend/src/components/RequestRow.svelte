@@ -16,88 +16,152 @@
   }
 
   let expanded = $state(false)
-  let activeTab = $state<'response' | 'headers'>('response')
-  let hasDetails = $derived(
-    result.failures.length > 0 ||
-      !!result.error ||
-      !!result.response_body ||
-      !!result.response_headers
-  )
-  let hasTabs = $derived(!!result.response_body || !!result.response_headers)
+  let activeTab = $state<'request' | 'response' | 'headers'>('response')
   let isTruncated = $derived(result.response_body?.endsWith(' [truncated]') ?? false)
+
+  interface ParsedFailure {
+    kind: string
+    expected: string
+    actual: string
+  }
+
+  // Parse the stable failure string format produced by ws.rs format_failure():
+  //   "status expected 200, got 404"
+  //   "jsonPath $.id expected octocat, got null"
+  //   "header expected application/json, got text/plain"
+  // Falls back to treating the whole string as a freeform message (script assertions).
+  function parseFailure(s: string): ParsedFailure {
+    const jsonPathMatch = s.match(/^jsonPath (\S+) expected (.*?), got (.*)$/)
+    if (jsonPathMatch) return { kind: jsonPathMatch[1], expected: jsonPathMatch[2], actual: jsonPathMatch[3] }
+    const m = s.match(/^(\w+) expected (.*?), got (.*)$/)
+    if (m) return { kind: m[1], expected: m[2], actual: m[3] }
+    return { kind: 'assertion', expected: s, actual: '' }
+  }
+
+  let parsedFailures = $derived(result.failures.map(parseFailure))
+
+  // Status badge label and variant
+  let badge = $derived(
+    result.error
+      ? { label: '⚠ error', variant: 'error' as const }
+      : result.passed
+        ? { label: '✓ passed', variant: 'passed' as const }
+        : {
+            label: `✗ ${result.failures.length} failed`,
+            variant: 'failed' as const,
+          }
+  )
+
+  let hasInlineContent = $derived(!result.passed || !!result.error)
 </script>
 
-<div class="request-row" class:failed={!result.passed}>
+<div class="request-row" class:failed={!result.passed} class:errored={!!result.error}>
+  <!-- Clickable header row -->
   <div
     class="row-main"
     role="button"
     tabindex="0"
-    onclick={() => {
-      if (hasDetails) expanded = !expanded
-    }}
+    onclick={() => (expanded = !expanded)}
     onkeydown={(e) => {
-      if (e.key === 'Enter' && hasDetails) expanded = !expanded
+      if (e.key === 'Enter') expanded = !expanded
     }}
   >
-    <span class="method" style:color={methodColors[result.method] ?? '#aaa'}>
-      {result.method || '—'}
-    </span>
-    <span class="name">{result.name}</span>
+    <div class="row-left">
+      <div class="row-top">
+        <span class="method" style:color={methodColors[result.method] ?? '#aaa'}>
+          {result.method || '—'}
+        </span>
+        <span class="name">{result.name}</span>
+      </div>
+      {#if result.url}
+        <span class="url">{result.url}</span>
+      {/if}
+    </div>
     <span class="spacer"></span>
     {#if result.status}
-      <span class="status">{result.status}</span>
+      <span class="status" class:status-ok={result.status < 400} class:status-err={result.status >= 400}>
+        {result.status}
+      </span>
     {/if}
     <span class="duration">{result.duration_ms}ms</span>
-    <span class="indicator">{result.passed ? '✓' : '✗'}</span>
-    {#if hasDetails}
-      <span class="chevron">{expanded ? '▾' : '▸'}</span>
-    {/if}
+    <span class="badge badge--{badge.variant}">{badge.label}</span>
+    <span class="chevron">{expanded ? '▾' : '▸'}</span>
   </div>
 
-  {#if expanded && hasDetails}
-    <div class="details">
+  <!-- Inline assertion failures — always visible, no click needed -->
+  {#if hasInlineContent}
+    <div class="inline-failures">
       {#if result.error}
-        <p class="error-msg">error: {result.error}</p>
-      {/if}
-      {#each result.failures as failure}
-        <p class="failure-msg">assertion failed: {failure}</p>
-      {/each}
-
-      {#if hasTabs}
-        <div class="tabs">
-          <button
-            class="tab"
-            class:active={activeTab === 'response'}
-            onclick={() => (activeTab = 'response')}
-          >
-            Response
-          </button>
-          <button
-            class="tab"
-            class:active={activeTab === 'headers'}
-            onclick={() => (activeTab = 'headers')}
-          >
-            Headers
-          </button>
+        <div class="assertion-card assertion-card--error">
+          <span class="assertion-kind">network error</span>
+          <span class="assertion-message">{result.error}</span>
         </div>
+      {/if}
+      {#each parsedFailures as f}
+        <div class="assertion-card">
+          <span class="assertion-kind">{f.kind}</span>
+          <div class="assertion-diff">
+            <span class="diff-label">expected</span>
+            <code class="diff-value diff-value--expected">{f.expected}</code>
+            {#if f.actual}
+              <span class="diff-label">got</span>
+              <code class="diff-value diff-value--actual">{f.actual}</code>
+            {/if}
+          </div>
+        </div>
+      {/each}
+    </div>
+  {/if}
 
-        {#if activeTab === 'response'}
-          <pre class="body-pre">{result.response_body ?? '(no body)'}</pre>
-          {#if isTruncated}
-            <p class="truncated-note">Response truncated at 10 KB</p>
-          {/if}
+  <!-- Expandable request / response / headers tabs -->
+  {#if expanded}
+    <div class="details">
+      <div class="tabs">
+        <button
+          class="tab"
+          class:active={activeTab === 'request'}
+          onclick={() => (activeTab = 'request')}
+        >
+          Request
+        </button>
+        <button
+          class="tab"
+          class:active={activeTab === 'response'}
+          onclick={() => (activeTab = 'response')}
+        >
+          Response
+        </button>
+        <button
+          class="tab"
+          class:active={activeTab === 'headers'}
+          onclick={() => (activeTab = 'headers')}
+        >
+          Headers
+        </button>
+      </div>
+
+      {#if activeTab === 'request'}
+        {#if result.request_body !== null}
+          <pre class="body-pre">{result.request_body}</pre>
         {:else}
-          <table class="headers-table">
-            <tbody>
-              {#each Object.entries(result.response_headers ?? {}) as [key, value]}
-                <tr>
-                  <td class="header-key">{key}</td>
-                  <td class="header-value">{value}</td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
+          <p class="no-body">No request body</p>
         {/if}
+      {:else if activeTab === 'response'}
+        <pre class="body-pre">{result.response_body ?? '(no body)'}</pre>
+        {#if isTruncated}
+          <p class="truncated-note">Response truncated at 10 KB</p>
+        {/if}
+      {:else}
+        <table class="headers-table">
+          <tbody>
+            {#each Object.entries(result.response_headers ?? {}) as [key, value]}
+              <tr>
+                <td class="header-key">{key}</td>
+                <td class="header-value">{value}</td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
       {/if}
     </div>
   {/if}
@@ -107,25 +171,62 @@
   .request-row {
     border-bottom: 1px solid #1e1e3a;
     font-size: 0.875rem;
+    border-left: 3px solid transparent;
+    transition: border-color 0.1s;
+  }
+
+  .request-row.failed {
+    border-left-color: #f93e3e;
+  }
+
+  .request-row.errored {
+    border-left-color: #fca130;
   }
 
   .row-main {
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 10px 16px;
-    cursor: default;
+    padding: 10px 16px 10px 13px;
+    cursor: pointer;
+  }
+
+  .row-main:hover {
+    background: #16162e;
+  }
+
+  .row-left {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .row-top {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .url {
+    font-size: 0.72rem;
+    color: #555;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 420px;
   }
 
   .method {
     font-weight: 700;
     font-size: 0.75rem;
     min-width: 52px;
+    letter-spacing: 0.03em;
   }
 
   .name {
-    color: #e0e0e0;
-    flex: 1;
+    color: #d8d8e8;
   }
 
   .spacer {
@@ -133,77 +234,161 @@
   }
 
   .status {
-    color: #888;
-    font-size: 0.8rem;
+    font-size: 0.78rem;
+    font-family: monospace;
     min-width: 36px;
     text-align: right;
+    font-weight: 600;
+  }
+
+  .status-ok {
+    color: #49cc90;
+  }
+
+  .status-err {
+    color: #f93e3e;
   }
 
   .duration {
-    color: #666;
+    color: #555;
     font-size: 0.75rem;
     min-width: 52px;
     text-align: right;
   }
 
-  .indicator {
-    font-size: 1rem;
-    min-width: 20px;
-    text-align: center;
+  /* Status badge */
+  .badge {
+    font-size: 0.7rem;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 10px;
+    white-space: nowrap;
+    letter-spacing: 0.02em;
   }
 
-  .failed .indicator {
-    color: #f93e3e;
-  }
-  :not(.failed) .indicator {
+  .badge--passed {
+    background: rgba(73, 204, 144, 0.12);
     color: #49cc90;
+    border: 1px solid rgba(73, 204, 144, 0.25);
+  }
+
+  .badge--failed {
+    background: rgba(249, 62, 62, 0.12);
+    color: #f93e3e;
+    border: 1px solid rgba(249, 62, 62, 0.25);
+  }
+
+  .badge--error {
+    background: rgba(252, 161, 48, 0.12);
+    color: #fca130;
+    border: 1px solid rgba(252, 161, 48, 0.25);
   }
 
   .chevron {
-    color: #666;
+    color: #444;
     font-size: 0.75rem;
   }
 
-  .details {
-    padding: 8px 16px 12px 16px;
-    background: #0f0f23;
+  /* Inline assertion failure cards */
+  .inline-failures {
+    padding: 0 16px 10px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
   }
 
-  .failure-msg,
-  .error-msg {
-    margin: 4px 0;
-    font-size: 0.8rem;
-    font-family: monospace;
+  .assertion-card {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    padding: 7px 12px;
+    background: #0a0a1a;
+    border-radius: 4px;
+    border-left: 3px solid #f93e3e;
   }
 
-  .failure-msg {
-    color: #f93e3e;
+  .assertion-card--error {
+    border-left-color: #fca130;
   }
-  .error-msg {
+
+  .assertion-kind {
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #888;
+    white-space: nowrap;
+    min-width: 60px;
+  }
+
+  .assertion-message {
+    font-size: 0.78rem;
     color: #fca130;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+  }
+
+  .assertion-diff {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .diff-label {
+    font-size: 0.68rem;
+    color: #555;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    white-space: nowrap;
+  }
+
+  .diff-value {
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 0.78rem;
+    padding: 1px 6px;
+    border-radius: 3px;
+  }
+
+  .diff-value--expected {
+    background: rgba(73, 204, 144, 0.1);
+    color: #49cc90;
+    border: 1px solid rgba(73, 204, 144, 0.2);
+  }
+
+  .diff-value--actual {
+    background: rgba(249, 62, 62, 0.1);
+    color: #f93e3e;
+    border: 1px solid rgba(249, 62, 62, 0.2);
+  }
+
+  /* Expandable details panel */
+  .details {
+    padding: 0 16px 12px 16px;
+    background: #0f0f23;
   }
 
   .tabs {
     display: flex;
     gap: 4px;
-    margin: 10px 0 6px;
+    padding: 8px 0 6px;
     border-bottom: 1px solid #1e1e3a;
-    padding-bottom: 6px;
+    margin-bottom: 6px;
   }
 
   .tab {
     background: none;
     border: none;
-    color: #888;
+    color: #666;
     cursor: pointer;
     padding: 4px 10px;
     font-size: 0.8rem;
     border-radius: 3px;
+    transition: background 0.1s;
   }
 
   .tab:hover {
     background: #1e1e3a;
-    color: #ccc;
+    color: #bbb;
   }
 
   .tab.active {
@@ -212,13 +397,13 @@
   }
 
   .body-pre {
-    margin: 6px 0 0;
+    margin: 0;
     background: #0a0a1a;
     border: 1px solid #1e1e3a;
     border-radius: 4px;
     padding: 10px;
     font-size: 0.75rem;
-    font-family: monospace;
+    font-family: 'SF Mono', 'Fira Code', monospace;
     overflow-y: auto;
     max-height: 300px;
     white-space: pre-wrap;
@@ -229,14 +414,20 @@
   .truncated-note {
     margin: 4px 0 0;
     font-size: 0.7rem;
-    color: #666;
+    color: #555;
+    font-style: italic;
+  }
+
+  .no-body {
+    margin: 4px 0 0;
+    font-size: 0.75rem;
+    color: #555;
     font-style: italic;
   }
 
   .headers-table {
     width: 100%;
     border-collapse: collapse;
-    margin-top: 6px;
     font-size: 0.75rem;
   }
 
