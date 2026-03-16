@@ -1,35 +1,44 @@
 <script lang="ts">
-  import type { RequestResult } from '../lib/types'
+  import type { ResultItem } from '../lib/types'
   import RequestRow from './RequestRow.svelte'
+  import IterationSeparator from './IterationSeparator.svelte'
 
   interface Props {
-    results: RequestResult[]
+    items: ResultItem[]
     running: boolean
     total: number
     summary: { passed: number; failed: number; total_duration_ms: number; avg_response_ms: number } | null
   }
 
-  let { results, running, total, summary }: Props = $props()
+  let { items, running, total, summary }: Props = $props()
 
   type FilterTab = 'all' | 'passed' | 'failed' | 'errors'
   let activeFilter = $state<FilterTab>('all')
 
-  let filteredResults = $derived(
+  // Only request-type items, for stats and filtering
+  let requestItems = $derived(items.filter((i): i is Extract<ResultItem, { type: 'request' }> => i.type === 'request'))
+
+  let livePassedCount = $derived(requestItems.filter((r) => r.result.passed).length)
+  let liveFailedCount = $derived(requestItems.filter((r) => !r.result.passed).length)
+
+  // When filtering, keep iteration separators only in 'all' view
+  let filteredItems = $derived(
     activeFilter === 'all'
-      ? results
-      : activeFilter === 'passed'
-        ? results.filter((r) => r.passed && !r.error)
-        : activeFilter === 'failed'
-          ? results.filter((r) => !r.passed && !r.error)
-          : results.filter((r) => !!r.error)
+      ? items
+      : items.filter((i) => {
+          if (i.type === 'iteration') return false
+          const r = i.result
+          if (activeFilter === 'passed') return r.passed && !r.error
+          if (activeFilter === 'failed') return !r.passed && !r.error
+          return !!r.error
+        })
   )
 
-  let livePassedCount = $derived(results.filter((r) => r.passed).length)
-  let liveFailedCount = $derived(results.filter((r) => !r.passed).length)
+  let filteredRequestCount = $derived(filteredItems.filter((i) => i.type === 'request').length)
 </script>
 
 <main class="results-panel">
-  {#if results.length === 0 && !running}
+  {#if items.length === 0 && !running}
     <div class="empty-state">
       <p>Configure a collection on the left and click <strong>Run</strong> to start.</p>
     </div>
@@ -37,12 +46,12 @@
     <div class="results-header">
       <span class="results-title">Results</span>
       {#if running}
-        <span class="running-badge">● Running {results.length}/{total}</span>
+        <span class="running-badge">● Running {requestItems.length}/{total}</span>
       {/if}
     </div>
 
     <div class="stats-bar">
-      <span class="stat">{results.length} requests</span>
+      <span class="stat">{requestItems.length} requests</span>
       <span class="dot">·</span>
       <span class="stat passed-stat">{livePassedCount} passed</span>
       <span class="dot">·</span>
@@ -68,13 +77,14 @@
     </div>
 
     <div class="results-list">
-      <!-- Note: using index `i` as the key per spec. Row expanded-state may transfer between
-           rows of the same index if the filter changes while rows are expanded — this is
-           acceptable for the current scope. -->
-      {#each filteredResults as result, i (i)}
-        <RequestRow {result} />
+      {#each filteredItems as item, i (i)}
+        {#if item.type === 'iteration'}
+          <IterationSeparator iteration={item.iteration} row={item.row} />
+        {:else}
+          <RequestRow result={item.result} />
+        {/if}
       {/each}
-      {#if filteredResults.length === 0 && results.length > 0}
+      {#if filteredRequestCount === 0 && requestItems.length > 0}
         <p class="no-match">No {activeFilter} requests.</p>
       {/if}
     </div>

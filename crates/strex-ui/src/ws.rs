@@ -7,9 +7,8 @@ use serde::Deserialize;
 use std::path::Path;
 
 use strex_core::{
-    execute_collection, parse_collection, parse_csv, parse_json, run_collection_with_data,
-    AssertionFailure, AssertionType, DataRunOpts, ExecutionContext, HttpResponse, RequestOutcome,
-    RunnerOpts,
+    execute_collection_streaming, parse_collection, parse_csv, parse_json, AssertionFailure,
+    AssertionType, ExecutionContext, HttpResponse, RequestOutcome, RunnerOpts,
 };
 
 use crate::events::WsEvent;
@@ -36,7 +35,7 @@ fn default_concurrency() -> usize {
 /// Format an [`AssertionFailure`] as a human-readable string.
 ///
 /// - `Status`   → `"status expected {expected}, got {actual}"`
-/// - `JsonPath` → `"jsonPath expected {expected}, got {actual}"`
+/// - `JsonPath` → `"jsonPath {path} expected {expected}, got {actual}"`
 /// - `Header`   → `"header expected {expected}, got {actual}"`
 /// - `Script`   → `"{expected}"` (`actual` is always empty for script assertions)
 fn format_failure(failure: &AssertionFailure) -> String {
@@ -48,9 +47,10 @@ fn format_failure(failure: &AssertionFailure) -> String {
             )
         }
         AssertionType::JsonPath => {
+            let path = failure.path.as_deref().unwrap_or("?");
             format!(
-                "jsonPath expected {}, got {}",
-                failure.expected, failure.actual
+                "jsonPath {} expected {}, got {}",
+                path, failure.expected, failure.actual
             )
         }
         AssertionType::Header => {
@@ -68,7 +68,7 @@ const BODY_LIMIT: usize = 10_240;
 
 /// Fields extracted from a [`RequestOutcome`] for use in [`WsEvent::RequestCompleted`].
 ///
-/// `(passed, status, failures, error, response_body, response_headers)`
+/// `(passed, status, failures, error, response_body, response_headers, request_body, url)`
 type OutcomeFields = (
     bool,
     Option<u16>,
@@ -76,6 +76,8 @@ type OutcomeFields = (
     Option<String>,
     Option<String>,
     Option<std::collections::HashMap<String, String>>,
+    Option<String>,
+    String,
 );
 
 /// Truncate `body` to at most [`BODY_LIMIT`] bytes, respecting UTF-8 character boundaries.
@@ -169,49 +171,118 @@ async fn run_collection_and_stream(
         let total = rows.len() * collection.requests.len();
         send_event(socket, WsEvent::RunStarted { total }).await;
 
-        let opts = DataRunOpts {
-            concurrency: config.concurrency,
-            fail_fast: config.fail_fast,
-            runner_opts: RunnerOpts::default(),
-        };
+        type DataChannelPayload = (usize, std::collections::HashMap<String, String>, Option<(String, String, u64, OutcomeFields)>);
 
-        let result = run_collection_with_data(collection, rows, opts)
-            .await
-            .map_err(|e| anyhow::anyhow!("Data-driven run failed: {e}"))?;
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<DataChannelPayload>();
 
+        let arc_col = std::sync::Arc::new(collection);
+        let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(config.concurrency));
+        let fail_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let fail_fast = config.fail_fast;
+
+        let runner = tokio::spawn(async move {
+            let mut join_set: tokio::task::JoinSet<()> = tokio::task::JoinSet::new();
+
+            for (idx, row) in rows.into_iter().enumerate() {
+                if fail_fast && fail_flag.load(std::sync::atomic::Ordering::Acquire) {
+                    break;
+                }
+
+                let col = std::sync::Arc::clone(&arc_col);
+                let sem = std::sync::Arc::clone(&semaphore);
+                let flag = std::sync::Arc::clone(&fail_flag);
+                let tx = tx.clone();
+                let row_clone = row.clone();
+
+                let permit = match sem.acquire_owned().await {
+                    Ok(p) => p,
+                    Err(_) => break,
+                };
+
+                if fail_fast && flag.load(std::sync::atomic::Ordering::Acquire) {
+                    break;
+                }
+
+                join_set.spawn(async move {
+                    let _permit = permit;
+                    let ctx = ExecutionContext::new_with_data(&col, &row_clone);
+                    let iteration = idx + 1;
+
+                    let _ = tx.send((iteration, row_clone.clone(), None));
+
+                    let col_result = execute_collection_streaming(
+                        &col,
+                        ctx,
+                        RunnerOpts::default(),
+                        |req_result| {
+                            let tx = tx.clone();
+                            let row_for_send = row_clone.clone();
+                            let name = req_result.name.clone();
+                            let method = col
+                                .requests
+                                .iter()
+                                .find(|r| r.name == name)
+                                .map(|r| r.method.clone())
+                                .unwrap_or_default();
+                            let duration_ms = req_result.duration_ms;
+                            let fields = outcome_fields(&req_result.outcome, &req_result.response);
+                            async move {
+                                let _ = tx.send((iteration, row_for_send, Some((name, method, duration_ms, fields))));
+                            }
+                        },
+                    )
+                    .await;
+
+                    if fail_fast && !col_result.passed() {
+                        flag.store(true, std::sync::atomic::Ordering::Release);
+                    }
+                });
+            }
+
+            while join_set.join_next().await.is_some() {}
+        });
+
+        let mut passed_count = 0usize;
+        let mut failed_count = 0usize;
         let mut total_duration_ms: u64 = 0;
-        for iter in &result.iterations {
-            for req_result in &iter.collection_result.request_results {
-                let (passed, status, failures, error, response_body, response_headers) =
-                    outcome_fields(&req_result.outcome, &req_result.response);
 
-                total_duration_ms += req_result.duration_ms;
-
-                // Look up the method from the request name in the collection iteration's result.
-                // We don't have the collection struct here, so we emit an empty method string —
-                // the iteration result does not carry method metadata. This matches the field
-                // the events module documents as the HTTP method from the collection YAML.
-                // NOTE: `run_collection_with_data` consumes the collection, so we can't
-                // access it here. We keep method as an empty string; the frontend still works.
-                send_event(
-                    socket,
-                    WsEvent::RequestCompleted {
-                        name: req_result.name.clone(),
-                        method: String::new(),
-                        passed,
-                        status,
-                        duration_ms: req_result.duration_ms,
-                        failures,
-                        error,
-                        response_body,
-                        response_headers,
-                    },
-                )
-                .await;
+        while let Some((iteration, row, payload)) = rx.recv().await {
+            match payload {
+                None => {
+                    send_event(socket, WsEvent::IterationStarted { iteration, row }).await;
+                }
+                Some((name, method, duration_ms, fields)) => {
+                    let (passed, status, failures, error, response_body, response_headers, request_body, url) = fields;
+                    if passed {
+                        passed_count += 1;
+                    } else {
+                        failed_count += 1;
+                    }
+                    total_duration_ms += duration_ms;
+                    send_event(
+                        socket,
+                        WsEvent::RequestCompleted {
+                            name,
+                            method,
+                            url,
+                            passed,
+                            status,
+                            duration_ms,
+                            failures,
+                            error,
+                            response_body,
+                            response_headers,
+                            request_body,
+                        },
+                    )
+                    .await;
+                }
             }
         }
 
-        let total_requests = result.passed + result.failed;
+        let _ = runner.await;
+
+        let total_requests = passed_count + failed_count;
         let avg_response_ms = if total_requests > 0 {
             total_duration_ms / total_requests as u64
         } else {
@@ -221,8 +292,8 @@ async fn run_collection_and_stream(
         send_event(
             socket,
             WsEvent::RunFinished {
-                passed: result.passed,
-                failed: result.failed,
+                passed: passed_count,
+                failed: failed_count,
                 total_duration_ms,
                 avg_response_ms,
             },
@@ -233,23 +304,41 @@ async fn run_collection_and_stream(
         let total = collection.requests.len();
         send_event(socket, WsEvent::RunStarted { total }).await;
 
-        // Build a method lookup map before consuming the collection.
         let method_map: std::collections::HashMap<String, String> = collection
             .requests
             .iter()
             .map(|r| (r.name.clone(), r.method.clone()))
             .collect();
 
+        type ChannelPayload = (String, u64, OutcomeFields);
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<ChannelPayload>();
+
         let ctx = ExecutionContext::new(&collection);
-        let col_result = execute_collection(&collection, ctx).await;
+        let runner = tokio::spawn(async move {
+            execute_collection_streaming(
+                &collection,
+                ctx,
+                RunnerOpts::default(),
+                |req_result| {
+                    let tx = tx.clone();
+                    let name = req_result.name.clone();
+                    let duration_ms = req_result.duration_ms;
+                    let fields = outcome_fields(&req_result.outcome, &req_result.response);
+                    async move {
+                        let _ = tx.send((name, duration_ms, fields));
+                    }
+                },
+            )
+            .await
+        });
 
         let mut passed_count = 0usize;
         let mut failed_count = 0usize;
         let mut total_duration_ms: u64 = 0;
 
-        for req_result in &col_result.request_results {
-            let (passed, status, failures, error, response_body, response_headers) =
-                outcome_fields(&req_result.outcome, &req_result.response);
+        while let Some((name, duration_ms, fields)) = rx.recv().await {
+            let (passed, status, failures, error, response_body, response_headers, request_body, url) =
+                fields;
 
             if passed {
                 passed_count += 1;
@@ -257,31 +346,32 @@ async fn run_collection_and_stream(
                 failed_count += 1;
             }
 
-            total_duration_ms += req_result.duration_ms;
+            total_duration_ms += duration_ms;
 
-            let method = method_map
-                .get(&req_result.name)
-                .cloned()
-                .unwrap_or_default();
+            let method = method_map.get(&name).cloned().unwrap_or_default();
 
             send_event(
                 socket,
                 WsEvent::RequestCompleted {
-                    name: req_result.name.clone(),
+                    name,
                     method,
+                    url,
                     passed,
                     status,
-                    duration_ms: req_result.duration_ms,
+                    duration_ms,
                     failures,
                     error,
                     response_body,
                     response_headers,
+                    request_body,
                 },
             )
             .await;
         }
 
-        let total_requests = col_result.request_results.len();
+        let _ = runner.await;
+
+        let total_requests = passed_count + failed_count;
         let avg_response_ms = if total_requests > 0 {
             total_duration_ms / total_requests as u64
         } else {
@@ -308,16 +398,41 @@ async fn run_collection_and_stream(
 ///
 /// `response` is `None` when a stopping error occurred before the HTTP phase.
 ///
-/// Returns an [`OutcomeFields`] tuple: `(passed, status, failures, error, response_body, response_headers)`.
+/// Returns an [`OutcomeFields`] tuple: `(passed, status, failures, error, response_body, response_headers, request_body, url)`.
 fn outcome_fields(outcome: &RequestOutcome, response: &Option<HttpResponse>) -> OutcomeFields {
     let status = response.as_ref().map(|r| r.status);
     let response_body = response.as_ref().map(|r| truncate_body(&r.body));
     let response_headers = response.as_ref().map(|r| r.headers.clone());
+    let request_body = response
+        .as_ref()
+        .and_then(|r| r.request_body.as_deref().map(truncate_body));
+    let url = response
+        .as_ref()
+        .map(|r| r.url.clone())
+        .unwrap_or_default();
     match outcome {
-        RequestOutcome::Passed => (true, status, vec![], None, response_body, response_headers),
+        RequestOutcome::Passed => (
+            true,
+            status,
+            vec![],
+            None,
+            response_body,
+            response_headers,
+            request_body,
+            url,
+        ),
         RequestOutcome::AssertionsFailed(failures) => {
             let msgs = failures.iter().map(format_failure).collect();
-            (false, status, msgs, None, response_body, response_headers)
+            (
+                false,
+                status,
+                msgs,
+                None,
+                response_body,
+                response_headers,
+                request_body,
+                url,
+            )
         }
         RequestOutcome::Error(e) => (
             false,
@@ -326,6 +441,8 @@ fn outcome_fields(outcome: &RequestOutcome, response: &Option<HttpResponse>) -> 
             Some(e.to_string()),
             response_body,
             response_headers,
+            request_body,
+            url,
         ),
     }
 }
@@ -341,6 +458,7 @@ mod tests {
             assertion_type: AssertionType::Status,
             expected: "200".into(),
             actual: "404".into(),
+            path: None,
         };
         assert_eq!(format_failure(&f), "status expected 200, got 404");
     }
@@ -351,10 +469,11 @@ mod tests {
             assertion_type: AssertionType::JsonPath,
             expected: "$.id exists".into(),
             actual: "null".into(),
+            path: Some("$.id".into()),
         };
         assert_eq!(
             format_failure(&f),
-            "jsonPath expected $.id exists, got null"
+            "jsonPath $.id expected $.id exists, got null"
         );
     }
 
@@ -364,6 +483,7 @@ mod tests {
             assertion_type: AssertionType::Header,
             expected: "application/json".into(),
             actual: "text/plain".into(),
+            path: None,
         };
         assert_eq!(
             format_failure(&f),
@@ -377,6 +497,7 @@ mod tests {
             assertion_type: AssertionType::Script,
             expected: "must be non-empty".into(),
             actual: String::new(),
+            path: None,
         };
         assert_eq!(format_failure(&f), "must be non-empty");
     }
@@ -415,7 +536,7 @@ mod tests {
 
     #[test]
     fn outcome_fields_passed() {
-        let (passed, status, failures, error, body, headers) =
+        let (passed, status, failures, error, body, headers, _request_body, _url) =
             outcome_fields(&RequestOutcome::Passed, &None);
         assert!(passed);
         assert!(status.is_none());
@@ -431,8 +552,9 @@ mod tests {
             assertion_type: AssertionType::Status,
             expected: "200".into(),
             actual: "500".into(),
+            path: None,
         }];
-        let (passed, _status, failures, error, _body, _headers) =
+        let (passed, _status, failures, error, _body, _headers, _request_body, _url) =
             outcome_fields(&RequestOutcome::AssertionsFailed(failures_in), &None);
         assert!(!passed);
         assert_eq!(failures, vec!["status expected 200, got 500"]);
@@ -450,7 +572,41 @@ mod tests {
         let body = "x".repeat(20_000);
         let result = truncate_body(&body);
         assert!(result.ends_with(" [truncated]"));
-        // Exact length: BODY_LIMIT bytes of content + 12 bytes for " [truncated]"
         assert_eq!(result.len(), BODY_LIMIT + " [truncated]".len());
+    }
+
+    #[test]
+    fn outcome_fields_includes_request_body() {
+        use std::collections::HashMap;
+        use strex_core::RequestTiming;
+        let response = Some(HttpResponse {
+            status: 200,
+            headers: HashMap::new(),
+            body: String::new(),
+            timing: RequestTiming::default(),
+            request_body: Some("hello=world".to_string()),
+            url: String::new(),
+        });
+        let (.., request_body, _url) = outcome_fields(&RequestOutcome::Passed, &response);
+        assert_eq!(request_body.as_deref(), Some("hello=world"));
+    }
+
+    #[test]
+    fn outcome_fields_truncates_long_request_body() {
+        use std::collections::HashMap;
+        use strex_core::RequestTiming;
+        let long_body = "x".repeat(20_000);
+        let response = Some(HttpResponse {
+            status: 200,
+            headers: HashMap::new(),
+            body: String::new(),
+            timing: RequestTiming::default(),
+            request_body: Some(long_body),
+            url: String::new(),
+        });
+        let (.., request_body, _url) = outcome_fields(&RequestOutcome::Passed, &response);
+        let rb = request_body.unwrap();
+        assert!(rb.ends_with(" [truncated]"));
+        assert_eq!(rb.len(), BODY_LIMIT + " [truncated]".len());
     }
 }

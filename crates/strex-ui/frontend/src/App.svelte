@@ -1,11 +1,11 @@
 <script lang="ts">
   import { connectRun } from './lib/ws'
-  import type { RunConfig, RequestResult, WsEvent } from './lib/types'
+  import type { RunConfig, WsEvent, ResultItem } from './lib/types'
   import ConfigPanel from './components/ConfigPanel.svelte'
   import ResultsPanel from './components/ResultsPanel.svelte'
 
   let running = $state(false)
-  let results = $state<RequestResult[]>([])
+  let items = $state<ResultItem[]>([])
   let total = $state(0)
   let summary = $state<{
     passed: number
@@ -15,7 +15,7 @@
   } | null>(null)
 
   function handleRun(config: RunConfig) {
-    results = []
+    items = []
     summary = null
     total = 0
     running = true
@@ -25,19 +25,26 @@
       (event: WsEvent) => {
         if (event.type === 'run_started') {
           total = event.total
+        } else if (event.type === 'iteration_started') {
+          items = [...items, { type: 'iteration', iteration: event.iteration, row: event.row }]
         } else if (event.type === 'request_completed') {
-          results = [
-            ...results,
+          items = [
+            ...items,
             {
-              name: event.name,
-              method: event.method,
-              passed: event.passed,
-              status: event.status,
-              duration_ms: event.duration_ms,
-              failures: event.failures,
-              error: event.error,
-              response_body: event.response_body,
-              response_headers: event.response_headers,
+              type: 'request',
+              result: {
+                name: event.name,
+                method: event.method,
+                url: event.url,
+                passed: event.passed,
+                status: event.status,
+                duration_ms: event.duration_ms,
+                failures: event.failures,
+                error: event.error,
+                response_body: event.response_body,
+                response_headers: event.response_headers,
+                request_body: event.request_body,
+              },
             },
           ]
         } else if (event.type === 'run_finished') {
@@ -62,7 +69,7 @@
 
 <div class="app">
   <ConfigPanel onRun={handleRun} {running} />
-  <ResultsPanel {results} {running} {total} {summary} />
+  <ResultsPanel {items} {running} {total} {summary} />
 </div>
 
 <style>

@@ -15,12 +15,21 @@ pub(crate) enum WsEvent {
         /// Total number of requests that will be executed.
         total: usize,
     },
+    /// Sent once per data-driven iteration, immediately before its first request.
+    IterationStarted {
+        /// 1-based iteration number.
+        iteration: usize,
+        /// The data row for this iteration (column name → value).
+        row: std::collections::HashMap<String, String>,
+    },
     /// Sent after each request completes (pass or fail).
     RequestCompleted {
         /// Request name from the collection YAML.
         name: String,
         /// HTTP method (GET, POST, etc.).
         method: String,
+        /// Fully-interpolated request URL.
+        url: String,
         /// True if all assertions passed.
         passed: bool,
         /// HTTP status code. None if a network error prevented a response.
@@ -35,6 +44,8 @@ pub(crate) enum WsEvent {
         response_body: Option<String>,
         /// Response headers (lowercase names). None on network error.
         response_headers: Option<HashMap<String, String>>,
+        /// Serialised outgoing request body, truncated to 10 240 bytes. `None` when the request had no body.
+        request_body: Option<String>,
     },
     /// Sent once when the run finishes.
     RunFinished {
@@ -54,6 +65,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn iteration_started_serializes_with_type_tag() {
+        let mut row = HashMap::new();
+        row.insert("username".to_string(), "alice".to_string());
+        let event = WsEvent::IterationStarted { iteration: 1, row };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains(r#""type":"iteration_started""#));
+        assert!(json.contains(r#""iteration":1"#));
+        assert!(json.contains("username"));
+        assert!(json.contains("alice"));
+    }
+
+    #[test]
     fn run_started_serializes_with_type_tag() {
         let event = WsEvent::RunStarted { total: 3 };
         let json = serde_json::to_string(&event).unwrap();
@@ -66,6 +89,7 @@ mod tests {
         let event = WsEvent::RequestCompleted {
             name: "Get User".into(),
             method: "GET".into(),
+            url: "https://api.example.com/users/1".into(),
             passed: true,
             status: Some(200),
             duration_ms: 45,
@@ -76,6 +100,7 @@ mod tests {
                 "content-type".into(),
                 "application/json".into(),
             )])),
+            request_body: None,
         };
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains(r#""type":"request_completed""#));
@@ -89,6 +114,7 @@ mod tests {
         let event = WsEvent::RequestCompleted {
             name: "Login".into(),
             method: "POST".into(),
+            url: "https://api.example.com/login".into(),
             passed: false,
             status: Some(401),
             duration_ms: 120,
@@ -96,6 +122,7 @@ mod tests {
             error: None,
             response_body: None,
             response_headers: None,
+            request_body: None,
         };
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("status expected 200, got 401"));
