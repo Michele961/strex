@@ -208,4 +208,38 @@ mod tests {
         assert!(v["requests"][0]["status"].is_null());
         assert!(v["requests"][0]["error"].is_string());
     }
+
+    #[test]
+    fn data_driven_produces_iterations_array() {
+        use strex_core::{DataRunResult, IterationResult};
+        let iter = IterationResult {
+            row_index: 0,
+            row: [("email".to_string(), "alice@example.com".to_string())].into(),
+            collection_result: CollectionResult {
+                request_results: vec![RequestResult {
+                    name: "Create".to_string(),
+                    outcome: RequestOutcome::Passed,
+                    duration_ms: 5,
+                    response: None,
+                }],
+            },
+        };
+        let result = RunResult {
+            collection: make_collection(),
+            outcome: RunOutcome::DataDriven(DataRunResult {
+                iterations: vec![iter],
+                passed: 1,
+                failed: 0,
+            }),
+        };
+        let mut buf = Vec::new();
+        print(&result, &mut buf).unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&buf).unwrap();
+        assert_eq!(v["passed"], 1);
+        assert_eq!(v["failed"], 0);
+        assert!(v["iterations"].is_array());
+        assert_eq!(v["iterations"][0]["row_index"], 0);
+        assert_eq!(v["iterations"][0]["row"]["email"], "alice@example.com");
+        assert_eq!(v["iterations"][0]["passed"], true);
+    }
 }
