@@ -1,0 +1,37 @@
+name: JSONPlaceholder users (data-driven demo)
+version: "1.0"
+
+# Demonstrates data-driven testing: runs the same two requests for each row in
+# data.json (or users-data.csv). Each iteration fetches a different user and
+# their posts.
+#
+# Run with JSON data file:
+#   strex run examples/users-data.yaml --data examples/data.json
+#
+# Run with CSV data file:
+#   strex run examples/users-data.yaml --data examples/users-data.csv
+
+environment:
+  baseUrl: https://jsonplaceholder.typicode.com
+
+requests:
+  - name: Get user
+    method: GET
+    url: "{{baseUrl}}/users/{{userId}}"
+    assertions:
+      - status: 200
+      - jsonPath: "$.id"
+        exists: true
+      - jsonPath: "$.email"
+        exists: true
+    post_script: |
+      const user = response.json();
+      console.log("User", variables.get("userId"), "→", user.email);
+
+  - name: Get user posts
+    method: GET
+    url: "{{baseUrl}}/posts?userId={{userId}}"
+    assertions:
+      - status: 200
+      - jsonPath: "$[0].userId"
+        exists: true
