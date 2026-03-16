@@ -193,4 +193,32 @@ mod tests {
         };
         assert_eq!(format_failure(&f), "must have items");
     }
+
+    #[test]
+    fn run_result_passed_when_data_driven_no_failures() {
+        use strex_core::DataRunResult;
+        let result = RunResult {
+            collection: one_request_collection(),
+            outcome: RunOutcome::DataDriven(DataRunResult {
+                iterations: vec![],
+                passed: 3,
+                failed: 0,
+            }),
+        };
+        assert!(result.passed());
+    }
+
+    #[test]
+    fn run_result_failed_when_data_driven_has_failures() {
+        use strex_core::DataRunResult;
+        let result = RunResult {
+            collection: one_request_collection(),
+            outcome: RunOutcome::DataDriven(DataRunResult {
+                iterations: vec![],
+                passed: 2,
+                failed: 1,
+            }),
+        };
+        assert!(!result.passed());
+    }
 }
