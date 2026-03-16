@@ -28,7 +28,9 @@ pub async fn start_server(opts: ServerOpts) -> anyhow::Result<()> {
         .route("/", get(routes::serve_index))
         .route(
             "/assets/*path",
-            get(|axum::extract::Path(p): axum::extract::Path<String>| routes::serve_asset(p)),
+            get(|axum::extract::Path(p): axum::extract::Path<String>| {
+                routes::serve_asset(format!("assets/{p}"))
+            }),
         )
         .route("/api/collections", get(routes::list_collections))
         .route("/ws", any(ws::ws_handler))
