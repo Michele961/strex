@@ -7,7 +7,12 @@
   let running = $state(false)
   let results = $state<RequestResult[]>([])
   let total = $state(0)
-  let summary = $state<{ passed: number; failed: number } | null>(null)
+  let summary = $state<{
+    passed: number
+    failed: number
+    total_duration_ms: number
+    avg_response_ms: number
+  } | null>(null)
 
   function handleRun(config: RunConfig) {
     results = []
@@ -31,10 +36,17 @@
               duration_ms: event.duration_ms,
               failures: event.failures,
               error: event.error,
+              response_body: event.response_body,
+              response_headers: event.response_headers,
             },
           ]
         } else if (event.type === 'run_finished') {
-          summary = { passed: event.passed, failed: event.failed }
+          summary = {
+            passed: event.passed,
+            failed: event.failed,
+            total_duration_ms: event.total_duration_ms,
+            avg_response_ms: event.avg_response_ms,
+          }
           running = false
         } else if (event.type === 'error') {
           console.error('Run error:', event.message)
