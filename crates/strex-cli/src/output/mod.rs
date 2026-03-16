@@ -41,7 +41,7 @@ pub enum RunOutcome {
 ///
 /// Used consistently by all output formatters (console, JSON, JUnit).
 /// - `Status`   → `"status expected {expected}, got {actual}"`
-/// - `JsonPath` → `"jsonPath expected {expected}, got {actual}"`
+/// - `JsonPath` → `"jsonPath {path} expected {expected}, got {actual}"`
 /// - `Header`   → `"header expected {expected}, got {actual}"`
 /// - `Script`   → `"{expected}"` (`actual` is always empty for script assertions)
 pub fn format_failure(failure: &AssertionFailure) -> String {
@@ -53,9 +53,10 @@ pub fn format_failure(failure: &AssertionFailure) -> String {
             )
         }
         AssertionType::JsonPath => {
+            let path = failure.path.as_deref().unwrap_or("?");
             format!(
-                "jsonPath expected {}, got {}",
-                failure.expected, failure.actual
+                "jsonPath {} expected {}, got {}",
+                path, failure.expected, failure.actual
             )
         }
         AssertionType::Header => {
@@ -136,6 +137,7 @@ mod tests {
                     assertion_type: AssertionType::Status,
                     expected: "200".to_string(),
                     actual: "404".to_string(),
+                    path: None,
                 }]),
                 duration_ms: 5,
                 response: None,
@@ -154,6 +156,7 @@ mod tests {
             assertion_type: AssertionType::Status,
             expected: "200".to_string(),
             actual: "404".to_string(),
+            path: None,
         };
         assert_eq!(format_failure(&f), "status expected 200, got 404");
     }
@@ -164,10 +167,11 @@ mod tests {
             assertion_type: AssertionType::JsonPath,
             expected: "$.name exists".to_string(),
             actual: "null".to_string(),
+            path: Some("$.name".to_string()),
         };
         assert_eq!(
             format_failure(&f),
-            "jsonPath expected $.name exists, got null"
+            "jsonPath $.name expected $.name exists, got null"
         );
     }
 
@@ -177,6 +181,7 @@ mod tests {
             assertion_type: AssertionType::Header,
             expected: "application/json".to_string(),
             actual: "text/plain".to_string(),
+            path: None,
         };
         assert_eq!(
             format_failure(&f),
@@ -190,6 +195,7 @@ mod tests {
             assertion_type: AssertionType::Script,
             expected: "must have items".to_string(),
             actual: String::new(),
+            path: None,
         };
         assert_eq!(format_failure(&f), "must have items");
     }

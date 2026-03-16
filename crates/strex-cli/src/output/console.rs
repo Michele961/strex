@@ -180,6 +180,7 @@ mod tests {
                         assertion_type: AssertionType::Status,
                         expected: "200".to_string(),
                         actual: "401".to_string(),
+                        path: None,
                     }]),
                     duration_ms: 5,
                     response: None,

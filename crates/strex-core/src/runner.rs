@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::future::Future;
 use std::time::{Duration, Instant};
 
 use serde_yaml::Value as YamlValue;
@@ -111,6 +112,36 @@ pub async fn execute_collection_with_opts(
     }
 }
 
+/// Run all requests sequentially, invoking `on_result` after each one completes.
+///
+/// This allows callers (e.g. the WebSocket handler) to stream results incrementally
+/// rather than waiting for the entire collection to finish. The callback receives a
+/// reference to the completed [`RequestResult`] and may perform async work (e.g.
+/// sending a WebSocket message).
+///
+/// All per-request failures are captured in [`RequestOutcome`] — this function never fails.
+pub async fn execute_collection_streaming<F, Fut>(
+    collection: &Collection,
+    context: ExecutionContext,
+    opts: RunnerOpts,
+    mut on_result: F,
+) -> CollectionResult
+where
+    F: FnMut(&RequestResult) -> Fut,
+    Fut: Future<Output = ()>,
+{
+    let mut results = Vec::with_capacity(collection.requests.len());
+    let mut context = context;
+    for request in &collection.requests {
+        let result = execute_request(request, &mut context, &opts).await;
+        on_result(&result).await;
+        results.push(result);
+    }
+    CollectionResult {
+        request_results: results,
+    }
+}
+
 async fn execute_request(
     request: &crate::collection::Request,
     context: &mut ExecutionContext,
@@ -207,6 +238,7 @@ async fn execute_request(
                     assertion_type: AssertionType::Script,
                     expected: message,
                     actual: String::new(),
+                    path: None,
                 });
             }
             Err(e) => {

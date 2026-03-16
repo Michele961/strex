@@ -83,6 +83,8 @@ pub struct AssertionFailure {
     pub expected: String,
     /// What value was actually observed.
     pub actual: String,
+    /// The JSONPath expression that was evaluated (only set for `JsonPath` assertions).
+    pub path: Option<String>,
 }
 
 /// A stopping error for a single request (phases 1, 2, 3, or 5 of the request lifecycle).
@@ -231,6 +233,7 @@ mod tests {
             assertion_type: AssertionType::Status,
             expected: "200".to_string(),
             actual: "404".to_string(),
+            path: None,
         };
         assert_eq!(f.assertion_type, AssertionType::Status);
         assert_eq!(f.expected, "200");

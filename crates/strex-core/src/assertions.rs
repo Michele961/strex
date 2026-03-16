@@ -183,6 +183,7 @@ fn check_assertion(assertion: &Assertion, response: &HttpResponse) -> Option<Ass
                     assertion_type: AssertionType::Status,
                     expected: expected.to_string(),
                     actual: response.status.to_string(),
+                    path: None,
                 })
             } else {
                 None
@@ -206,6 +207,7 @@ fn check_json_path(
                 assertion_type: AssertionType::JsonPath,
                 expected: "valid JSON body".to_string(),
                 actual: "<body is not valid JSON>".to_string(),
+                path: Some(path.to_string()),
             });
         }
     };
@@ -217,6 +219,7 @@ fn check_json_path(
                 assertion_type: AssertionType::JsonPath,
                 expected: format!("valid JSONPath '{path}'"),
                 actual: format!("invalid JSONPath: {e}"),
+                path: Some(path.to_string()),
             });
         }
     };
@@ -231,6 +234,7 @@ fn check_json_path(
                     assertion_type: AssertionType::JsonPath,
                     expected: format!("exists={expected}"),
                     actual: format!("exists={found}"),
+                    path: Some(path.to_string()),
                 })
             } else {
                 None
@@ -246,6 +250,7 @@ fn check_json_path(
                     assertion_type: AssertionType::JsonPath,
                     expected: expected.clone(),
                     actual,
+                    path: Some(path.to_string()),
                 })
             } else {
                 None
@@ -259,6 +264,7 @@ fn check_json_path(
                         assertion_type: AssertionType::JsonPath,
                         expected: format!("contains '{expected}'"),
                         actual: "<no match>".to_string(),
+                        path: Some(path.to_string()),
                     });
                 }
             };
@@ -274,6 +280,7 @@ fn check_json_path(
                     assertion_type: AssertionType::JsonPath,
                     expected: format!("contains '{expected}'"),
                     actual: json_value_to_comparable(first),
+                    path: Some(path.to_string()),
                 })
             } else {
                 None
@@ -308,6 +315,7 @@ fn check_header(
                     assertion_type: AssertionType::Header,
                     expected: format!("header '{name}' exists={expected}"),
                     actual: format!("header '{name}' exists={found}"),
+                    path: None,
                 })
             } else {
                 None
@@ -320,6 +328,7 @@ fn check_header(
                     assertion_type: AssertionType::Header,
                     expected: expected.clone(),
                     actual: actual.to_string(),
+                    path: None,
                 })
             } else {
                 None
@@ -332,6 +341,7 @@ fn check_header(
                     assertion_type: AssertionType::Header,
                     expected: format!("contains '{expected}'"),
                     actual: actual.to_string(),
+                    path: None,
                 })
             } else {
                 None
@@ -350,6 +360,8 @@ mod tests {
             headers: HashMap::new(),
             body: body.to_string(),
             timing: crate::http::RequestTiming::default(),
+            request_body: None,
+            url: String::new(),
         }
     }
 
@@ -361,6 +373,8 @@ mod tests {
             headers,
             body: String::new(),
             timing: crate::http::RequestTiming::default(),
+            request_body: None,
+            url: String::new(),
         }
     }
 
