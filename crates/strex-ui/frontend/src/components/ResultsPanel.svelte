@@ -6,10 +6,26 @@
     results: RequestResult[]
     running: boolean
     total: number
-    summary: { passed: number; failed: number } | null
+    summary: { passed: number; failed: number; total_duration_ms: number; avg_response_ms: number } | null
   }
 
   let { results, running, total, summary }: Props = $props()
+
+  type FilterTab = 'all' | 'passed' | 'failed' | 'errors'
+  let activeFilter = $state<FilterTab>('all')
+
+  let filteredResults = $derived(
+    activeFilter === 'all'
+      ? results
+      : activeFilter === 'passed'
+        ? results.filter((r) => r.passed && !r.error)
+        : activeFilter === 'failed'
+          ? results.filter((r) => !r.passed && !r.error)
+          : results.filter((r) => !!r.error)
+  )
+
+  let livePassedCount = $derived(results.filter((r) => r.passed).length)
+  let liveFailedCount = $derived(results.filter((r) => !r.passed).length)
 </script>
 
 <main class="results-panel">
@@ -25,21 +41,43 @@
       {/if}
     </div>
 
-    <div class="results-list">
-      {#each results as result, i (i)}
-        <RequestRow {result} />
+    <div class="stats-bar">
+      <span class="stat">{results.length} requests</span>
+      <span class="dot">·</span>
+      <span class="stat passed-stat">{livePassedCount} passed</span>
+      <span class="dot">·</span>
+      <span class="stat failed-stat">{liveFailedCount} failed</span>
+      {#if summary}
+        <span class="dot">·</span>
+        <span class="stat">{summary.total_duration_ms}ms total</span>
+        <span class="dot">·</span>
+        <span class="stat">avg {summary.avg_response_ms}ms</span>
+      {/if}
+    </div>
+
+    <div class="filter-tabs">
+      {#each (['all', 'passed', 'failed', 'errors'] as FilterTab[]) as tab}
+        <button
+          class="filter-tab"
+          class:active={activeFilter === tab}
+          onclick={() => (activeFilter = tab)}
+        >
+          {tab.charAt(0).toUpperCase() + tab.slice(1)}
+        </button>
       {/each}
     </div>
 
-    {#if summary}
-      <div class="summary" class:all-passed={summary.failed === 0}>
-        <span>{results.length} requests</span>
-        <span class="dot">·</span>
-        <span class="passed-count">{summary.passed} passed</span>
-        <span class="dot">·</span>
-        <span class="failed-count">{summary.failed} failed</span>
-      </div>
-    {/if}
+    <div class="results-list">
+      <!-- Note: using index `i` as the key per spec. Row expanded-state may transfer between
+           rows of the same index if the filter changes while rows are expanded — this is
+           acceptable for the current scope. -->
+      {#each filteredResults as result, i (i)}
+        <RequestRow {result} />
+      {/each}
+      {#if filteredResults.length === 0 && results.length > 0}
+        <p class="no-match">No {activeFilter} requests.</p>
+      {/if}
+    </div>
   {/if}
 </main>
 
@@ -67,7 +105,7 @@
     display: flex;
     align-items: center;
     gap: 16px;
-    padding: 16px 20px;
+    padding: 16px 20px 10px;
     border-bottom: 1px solid #1e1e3a;
   }
 
@@ -86,8 +124,68 @@
   }
 
   @keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.5; }
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.5;
+    }
+  }
+
+  .stats-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 20px;
+    font-size: 0.8rem;
+    border-bottom: 1px solid #1e1e3a;
+    background: #0f0f23;
+  }
+
+  .stat {
+    color: #888;
+  }
+
+  .passed-stat {
+    color: #49cc90;
+  }
+
+  .failed-stat {
+    color: #f93e3e;
+  }
+
+  .dot {
+    color: #333;
+  }
+
+  .filter-tabs {
+    display: flex;
+    gap: 2px;
+    padding: 8px 16px;
+    border-bottom: 1px solid #1e1e3a;
+  }
+
+  .filter-tab {
+    background: none;
+    border: none;
+    color: #666;
+    cursor: pointer;
+    padding: 4px 12px;
+    font-size: 0.8rem;
+    border-radius: 3px;
+    transition: background 0.1s;
+  }
+
+  .filter-tab:hover {
+    background: #1e1e3a;
+    color: #bbb;
+  }
+
+  .filter-tab.active {
+    background: #1e1e3a;
+    color: #ff6b35;
+    font-weight: 600;
   }
 
   .results-list {
@@ -95,18 +193,10 @@
     overflow-y: auto;
   }
 
-  .summary {
-    display: flex;
-    gap: 10px;
-    align-items: center;
-    padding: 14px 20px;
-    border-top: 1px solid #1e1e3a;
-    font-size: 0.875rem;
-    background: #1a1a2e;
+  .no-match {
+    color: #555;
+    font-size: 0.85rem;
+    text-align: center;
+    padding: 24px;
   }
-
-  .dot { color: #444; }
-  .passed-count { color: #49cc90; font-weight: 600; }
-  .failed-count { color: #f93e3e; font-weight: 600; }
-  .all-passed .failed-count { color: #555; }
 </style>
