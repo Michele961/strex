@@ -8,7 +8,7 @@ use axum::{
 };
 use tower_http::cors::CorsLayer;
 
-use crate::{routes, ws};
+use crate::{request_list, routes, ws};
 
 /// Options for starting the strex UI server.
 pub struct ServerOpts {
@@ -33,6 +33,10 @@ pub async fn start_server(opts: ServerOpts) -> anyhow::Result<()> {
             }),
         )
         .route("/api/collections", get(routes::list_collections))
+        .route(
+            "/api/collection-requests",
+            get(request_list::list_collection_requests),
+        )
         .route("/ws", any(ws::ws_handler))
         .layer(CorsLayer::permissive());
 
