@@ -119,6 +119,16 @@ fn scan_for_duplicate_keys(raw: &str) -> Result<(), CollectionError> {
             }
         }
 
+        // A new list element (`- ...`) at this indent level starts a fresh mapping
+        // scope — reset any key set at this indent and deeper to avoid false
+        // duplicate-key positives across sibling list items.
+        let is_list_item = trimmed == "-" || trimmed.starts_with("- ");
+        if is_list_item {
+            // Remove the entry at the current indent level so the new list item
+            // begins with an empty key set, then re-enter if a key is found below.
+            stack.retain(|(lvl, _)| *lvl < indent);
+        }
+
         if let Some(key) = extract_mapping_key(trimmed) {
             if let Some(entry) = stack.iter_mut().find(|(lvl, _)| *lvl == indent) {
                 if entry.1.contains(&key) {
