@@ -1,0 +1,28 @@
+[package]
+name = "strex-ui"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Async web framework — WebSocket support built in
+axum = { version = "0.7", features = ["ws"] }
+# Async runtime
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+# Embed static files (Svelte dist) into the binary at compile time
+rust-embed = "8"
+# JSON serialization for API responses and WebSocket events
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Open the browser from Rust
+open = "5"
+# CORS and other HTTP middleware
+tower-http = { version = "0.5", features = ["cors"] }
+# MIME type detection for static file serving
+mime_guess = "2"
+# Collection runner — execute collections and stream results
+strex-core = { path = "../strex-core" }
+# Application-level error handling
+anyhow = "1"
+
+[dev-dependencies]
+tempfile = "3"

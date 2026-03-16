@@ -3,6 +3,7 @@ members = [
     "crates/strex-core",
     "crates/strex-script",
     "crates/strex-cli",
+    "crates/strex-ui",
 ]
 resolver = "2"
 
