@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { fetchCollections } from '../lib/api'
-  import type { RunConfig } from '../lib/types'
+  import { fetchCollections, fetchCollectionRequests } from '../lib/api'
+  import type { RunConfig, RequestSequenceItem } from '../lib/types'
 
   interface Props {
     onRun: (config: RunConfig) => void
@@ -15,7 +15,18 @@
   let concurrency = $state(1)
   let failFast = $state(false)
   let activeTab = $state<'functional' | 'performance'>('functional')
+  let requestSequence = $state<RequestSequenceItem[]>([])
+  let sequenceLoading = $state(false)
 
+  const methodColors: Record<string, string> = {
+    GET: '#61affe',
+    POST: '#49cc90',
+    PUT: '#fca130',
+    PATCH: '#50e3c2',
+    DELETE: '#f93e3e',
+  }
+
+  // Load collection list on mount
   $effect(() => {
     fetchCollections()
       .then((files) => {
@@ -23,6 +34,25 @@
         if (files.length > 0) selectedCollection = files[0]
       })
       .catch((e: unknown) => console.error('Failed to load collections:', e))
+  })
+
+  // Load request sequence when selected collection changes
+  $effect(() => {
+    if (!selectedCollection) {
+      requestSequence = []
+      return
+    }
+    sequenceLoading = true
+    fetchCollectionRequests(selectedCollection)
+      .then((items) => {
+        requestSequence = items
+      })
+      .catch(() => {
+        requestSequence = []
+      })
+      .finally(() => {
+        sequenceLoading = false
+      })
   })
 
   function handleRun() {
@@ -69,6 +99,23 @@
           <p class="hint">No .yaml files found in the current directory.</p>
         {/if}
       </label>
+
+      {#if sequenceLoading}
+        <p class="hint">Loading requests…</p>
+      {:else if requestSequence.length > 0}
+        <ol class="sequence-list">
+          {#each requestSequence as item, i}
+            <li class="sequence-item">
+              <span class="seq-num">{i + 1}.</span>
+              <span
+                class="seq-method"
+                style:color={methodColors[item.method] ?? '#aaa'}
+              >{item.method}</span>
+              <span class="seq-name">{item.name}</span>
+            </li>
+          {/each}
+        </ol>
+      {/if}
 
       <label class="field">
         <span>Data file <em>(optional)</em></span>
@@ -230,5 +277,41 @@
   .run-button:disabled {
     background: #444;
     cursor: not-allowed;
+  }
+
+  .sequence-list {
+    list-style: none;
+    margin: 8px 0 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .sequence-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.78rem;
+    color: #888;
+  }
+
+  .seq-num {
+    min-width: 18px;
+    color: #555;
+    text-align: right;
+  }
+
+  .seq-method {
+    font-weight: 700;
+    font-size: 0.7rem;
+    min-width: 40px;
+  }
+
+  .seq-name {
+    color: #aaa;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 </style>
