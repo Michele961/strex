@@ -163,6 +163,8 @@ mod tests {
                         request_body: None,
                         url: String::new(),
                     }),
+                    logs: vec![],
+                    passed_assertions: vec![],
                 }],
             }),
         };
@@ -191,6 +193,8 @@ mod tests {
                     }]),
                     duration_ms: 5,
                     response: None,
+                    logs: vec![],
+                    passed_assertions: vec![],
                 }],
             }),
         };
@@ -217,6 +221,8 @@ mod tests {
                     }),
                     duration_ms: 1,
                     response: None,
+                    logs: vec![],
+                    passed_assertions: vec![],
                 }],
             }),
         };
@@ -240,6 +246,8 @@ mod tests {
                     outcome: RequestOutcome::Passed,
                     duration_ms: 5,
                     response: None,
+                    logs: vec![],
+                    passed_assertions: vec![],
                 }],
             },
         };

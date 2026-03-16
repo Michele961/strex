@@ -43,6 +43,8 @@ fn passed_run_produces_testsuite_with_zero_failures() {
             outcome: RequestOutcome::Passed,
             duration_ms: 10,
             response: None,
+            logs: vec![],
+            passed_assertions: vec![],
         }],
     };
     let result = make_result(col, RunOutcome::Single(col_result));
@@ -80,6 +82,8 @@ fn failed_assertion_produces_failure_element_and_count() {
             }]),
             duration_ms: 5,
             response: None,
+            logs: vec![],
+            passed_assertions: vec![],
         }],
     };
     let result = make_result(col, RunOutcome::Single(col_result));
@@ -123,6 +127,8 @@ fn special_chars_in_names_are_xml_escaped() {
             outcome: RequestOutcome::Passed,
             duration_ms: 5,
             response: None,
+            logs: vec![],
+            passed_assertions: vec![],
         }],
     };
     let result = make_result(col, RunOutcome::Single(col_result));
@@ -149,6 +155,8 @@ fn xml_has_declaration_and_testsuites_root() {
             outcome: RequestOutcome::Passed,
             duration_ms: 1,
             response: None,
+            logs: vec![],
+            passed_assertions: vec![],
         }],
     };
     let result = make_result(col, RunOutcome::Single(col_result));
@@ -177,6 +185,8 @@ fn error_request_produces_error_element_and_count() {
             }),
             duration_ms: 0,
             response: None,
+            logs: vec![],
+            passed_assertions: vec![],
         }],
     };
     let result = make_result(col, RunOutcome::Single(col_result));
@@ -206,6 +216,8 @@ fn data_driven_produces_one_testsuite_per_iteration() {
                 outcome: RequestOutcome::Passed,
                 duration_ms: 5,
                 response: None,
+                logs: vec![],
+                passed_assertions: vec![],
             }],
         },
     };
@@ -223,6 +235,8 @@ fn data_driven_produces_one_testsuite_per_iteration() {
                 }]),
                 duration_ms: 5,
                 response: None,
+                logs: vec![],
+                passed_assertions: vec![],
             }],
         },
     };
@@ -263,6 +277,8 @@ fn escape_xml_covers_all_five_chars() {
             outcome: RequestOutcome::Passed,
             duration_ms: 1,
             response: None,
+            logs: vec![],
+            passed_assertions: vec![],
         }],
     };
     let result = make_result(col, RunOutcome::Single(col_result));

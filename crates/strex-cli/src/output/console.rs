@@ -172,6 +172,8 @@ mod tests {
                     outcome: RequestOutcome::Passed,
                     duration_ms: 10,
                     response: None,
+                    logs: vec![],
+                    passed_assertions: vec![],
                 }],
             }),
         };
@@ -198,6 +200,8 @@ mod tests {
                     }]),
                     duration_ms: 5,
                     response: None,
+                    logs: vec![],
+                    passed_assertions: vec![],
                 }],
             }),
         };
@@ -223,6 +227,8 @@ mod tests {
                     outcome: RequestOutcome::Passed,
                     duration_ms: 5,
                     response: None,
+                    logs: vec![],
+                    passed_assertions: vec![],
                 }],
             },
         };
