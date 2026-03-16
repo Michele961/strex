@@ -4,11 +4,24 @@ use std::collections::HashMap;
 
 use serde::Serialize;
 
+/// A single console output entry emitted by a script.
+#[derive(Debug, Serialize)]
+pub(crate) struct ConsoleLog {
+    /// Severity: `"log"`, `"warn"`, or `"error"`.
+    pub level: &'static str,
+    /// The logged message text.
+    pub message: String,
+}
+
 /// Events streamed from the server to the browser over WebSocket.
 ///
 /// Tagged with `"type"` field in JSON (e.g. `{"type":"run_started","total":3}`).
 #[derive(Debug, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+// RequestCompleted holds several Vecs and Strings required for serialisation; WsEvent
+// values are short-lived and never stored in collections, so the size difference
+// between variants has no practical impact.
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum WsEvent {
     /// Sent once when the run begins.
     RunStarted {
@@ -46,13 +59,19 @@ pub(crate) enum WsEvent {
         response_headers: Option<HashMap<String, String>>,
         /// Serialised outgoing request body, truncated to 10 240 bytes. `None` when the request had no body.
         request_body: Option<String>,
+        /// Console output from pre- and post-request scripts.
+        logs: Vec<ConsoleLog>,
+        /// Human-readable descriptions of declarative assertions that passed (e.g. "status 200").
+        passed_assertions: Vec<String>,
     },
     /// Sent once when the run finishes.
     RunFinished {
         /// Number of requests that passed.
         passed: usize,
-        /// Number of requests that failed.
+        /// Number of requests that failed (excludes skipped).
         failed: usize,
+        /// Number of requests that were skipped due to a prior failure.
+        skipped: usize,
         /// Sum of all request `duration_ms` values in milliseconds.
         total_duration_ms: u64,
         /// Mean request duration in milliseconds (0 if no requests ran).
@@ -101,6 +120,8 @@ mod tests {
                 "application/json".into(),
             )])),
             request_body: None,
+            logs: vec![],
+            passed_assertions: vec![],
         };
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains(r#""type":"request_completed""#));
@@ -123,6 +144,8 @@ mod tests {
             response_body: None,
             response_headers: None,
             request_body: None,
+            logs: vec![],
+            passed_assertions: vec![],
         };
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("status expected 200, got 401"));
@@ -133,6 +156,7 @@ mod tests {
         let event = WsEvent::RunFinished {
             passed: 2,
             failed: 1,
+            skipped: 0,
             total_duration_ms: 500,
             avg_response_ms: 166,
         };

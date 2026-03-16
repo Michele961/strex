@@ -8,10 +8,11 @@ use std::path::Path;
 
 use strex_core::{
     execute_collection_streaming, parse_collection, parse_csv, parse_json, AssertionFailure,
-    AssertionType, ExecutionContext, HttpResponse, RequestOutcome, RunnerOpts,
+    AssertionType, ExecutionContext, LogLevel, RequestOutcome,
+    RequestResult, RunnerOpts,
 };
 
-use crate::events::WsEvent;
+use crate::events::{ConsoleLog, WsEvent};
 
 /// Configuration sent by the browser as the first WebSocket message.
 #[derive(Debug, Deserialize)]
@@ -26,6 +27,13 @@ pub struct RunConfig {
     /// When true, stop launching new iterations after the first failure.
     #[serde(default)]
     pub fail_fast: bool,
+    /// Maximum number of data rows to run. `None` means run all rows.
+    #[serde(default)]
+    pub max_iterations: Option<usize>,
+    /// Number of times to repeat the collection when no data file is provided.
+    /// `None` or `Some(1)` means run once (default behaviour).
+    #[serde(default)]
+    pub repeat_iterations: Option<usize>,
 }
 
 fn default_concurrency() -> usize {
@@ -68,7 +76,7 @@ const BODY_LIMIT: usize = 10_240;
 
 /// Fields extracted from a [`RequestOutcome`] for use in [`WsEvent::RequestCompleted`].
 ///
-/// `(passed, status, failures, error, response_body, response_headers, request_body, url)`
+/// `(passed, status, failures, error, response_body, response_headers, request_body, url, logs, passed_assertions)`
 type OutcomeFields = (
     bool,
     Option<u16>,
@@ -78,6 +86,8 @@ type OutcomeFields = (
     Option<std::collections::HashMap<String, String>>,
     Option<String>,
     String,
+    Vec<ConsoleLog>,
+    Vec<String>,
 );
 
 /// Truncate `body` to at most [`BODY_LIMIT`] bytes, respecting UTF-8 character boundaries.
@@ -168,6 +178,12 @@ async fn run_collection_and_stream(
             ));
         };
 
+        let rows = if let Some(max) = config.max_iterations {
+            rows.into_iter().take(max).collect::<Vec<_>>()
+        } else {
+            rows
+        };
+
         let total = rows.len() * collection.requests.len();
         send_event(socket, WsEvent::RunStarted { total }).await;
 
@@ -179,6 +195,11 @@ async fn run_collection_and_stream(
         let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(config.concurrency));
         let fail_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let fail_fast = config.fail_fast;
+        let http_client = std::sync::Arc::new(
+            reqwest::Client::builder()
+                .build()
+                .map_err(|e| anyhow::anyhow!("Failed to build HTTP client: {e}"))?,
+        );
 
         let runner = tokio::spawn(async move {
             let mut join_set: tokio::task::JoinSet<()> = tokio::task::JoinSet::new();
@@ -193,6 +214,7 @@ async fn run_collection_and_stream(
                 let flag = std::sync::Arc::clone(&fail_flag);
                 let tx = tx.clone();
                 let row_clone = row.clone();
+                let client = std::sync::Arc::clone(&http_client);
 
                 let permit = match sem.acquire_owned().await {
                     Ok(p) => p,
@@ -210,10 +232,11 @@ async fn run_collection_and_stream(
 
                     let _ = tx.send((iteration, row_clone.clone(), None));
 
+                    let opts = RunnerOpts { http_client: client, ..RunnerOpts::default() };
                     let col_result = execute_collection_streaming(
                         &col,
                         ctx,
-                        RunnerOpts::default(),
+                        opts,
                         |req_result| {
                             let tx = tx.clone();
                             let row_for_send = row_clone.clone();
@@ -225,7 +248,7 @@ async fn run_collection_and_stream(
                                 .map(|r| r.method.clone())
                                 .unwrap_or_default();
                             let duration_ms = req_result.duration_ms;
-                            let fields = outcome_fields(&req_result.outcome, &req_result.response);
+                            let fields = outcome_fields(req_result);
                             async move {
                                 let _ = tx.send((iteration, row_for_send, Some((name, method, duration_ms, fields))));
                             }
@@ -244,6 +267,7 @@ async fn run_collection_and_stream(
 
         let mut passed_count = 0usize;
         let mut failed_count = 0usize;
+        let mut skipped_count = 0usize;
         let mut total_duration_ms: u64 = 0;
 
         while let Some((iteration, row, payload)) = rx.recv().await {
@@ -252,9 +276,11 @@ async fn run_collection_and_stream(
                     send_event(socket, WsEvent::IterationStarted { iteration, row }).await;
                 }
                 Some((name, method, duration_ms, fields)) => {
-                    let (passed, status, failures, error, response_body, response_headers, request_body, url) = fields;
+                    let (passed, status, failures, error, response_body, response_headers, request_body, url, logs, passed_assertions) = fields;
                     if passed {
                         passed_count += 1;
+                    } else if error.as_deref() == Some("skipped") {
+                        skipped_count += 1;
                     } else {
                         failed_count += 1;
                     }
@@ -273,6 +299,8 @@ async fn run_collection_and_stream(
                             response_body,
                             response_headers,
                             request_body,
+                            logs,
+                            passed_assertions,
                         },
                     )
                     .await;
@@ -282,9 +310,9 @@ async fn run_collection_and_stream(
 
         let _ = runner.await;
 
-        let total_requests = passed_count + failed_count;
-        let avg_response_ms = if total_requests > 0 {
-            total_duration_ms / total_requests as u64
+        let counted = passed_count + failed_count;
+        let avg_response_ms = if counted > 0 {
+            total_duration_ms / counted as u64
         } else {
             0
         };
@@ -294,86 +322,149 @@ async fn run_collection_and_stream(
             WsEvent::RunFinished {
                 passed: passed_count,
                 failed: failed_count,
+                skipped: skipped_count,
                 total_duration_ms,
                 avg_response_ms,
             },
         )
         .await;
     } else {
-        // --- Single run ---
-        let total = collection.requests.len();
+        // --- Single run (optionally repeated N times, with concurrency) ---
+        let repeats = config.repeat_iterations.unwrap_or(1).max(1);
+        let total = repeats * collection.requests.len();
         send_event(socket, WsEvent::RunStarted { total }).await;
 
-        let method_map: std::collections::HashMap<String, String> = collection
-            .requests
-            .iter()
-            .map(|r| (r.name.clone(), r.method.clone()))
-            .collect();
+        type RepeatChannelPayload = (usize, Option<(String, String, u64, OutcomeFields)>);
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<RepeatChannelPayload>();
 
-        type ChannelPayload = (String, u64, OutcomeFields);
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<ChannelPayload>();
+        let arc_col = std::sync::Arc::new(collection);
+        let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(config.concurrency));
+        let fail_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let fail_fast = config.fail_fast;
+        let http_client = std::sync::Arc::new(
+            reqwest::Client::builder()
+                .build()
+                .map_err(|e| anyhow::anyhow!("Failed to build HTTP client: {e}"))?,
+        );
 
-        let ctx = ExecutionContext::new(&collection);
         let runner = tokio::spawn(async move {
-            execute_collection_streaming(
-                &collection,
-                ctx,
-                RunnerOpts::default(),
-                |req_result| {
-                    let tx = tx.clone();
-                    let name = req_result.name.clone();
-                    let duration_ms = req_result.duration_ms;
-                    let fields = outcome_fields(&req_result.outcome, &req_result.response);
-                    async move {
-                        let _ = tx.send((name, duration_ms, fields));
+            let mut join_set: tokio::task::JoinSet<()> = tokio::task::JoinSet::new();
+
+            for iteration in 1..=repeats {
+                if fail_fast && fail_flag.load(std::sync::atomic::Ordering::Acquire) {
+                    break;
+                }
+
+                let col = std::sync::Arc::clone(&arc_col);
+                let sem = std::sync::Arc::clone(&semaphore);
+                let flag = std::sync::Arc::clone(&fail_flag);
+                let tx = tx.clone();
+                let client = std::sync::Arc::clone(&http_client);
+
+                let permit = match sem.acquire_owned().await {
+                    Ok(p) => p,
+                    Err(_) => break,
+                };
+
+                if fail_fast && flag.load(std::sync::atomic::Ordering::Acquire) {
+                    break;
+                }
+
+                join_set.spawn(async move {
+                    let _permit = permit;
+                    let ctx = ExecutionContext::new(&col);
+
+                    let _ = tx.send((iteration, None));
+
+                    let opts = RunnerOpts { http_client: client, ..RunnerOpts::default() };
+                    let col_result = execute_collection_streaming(
+                        &col,
+                        ctx,
+                        opts,
+                        |req_result| {
+                            let tx = tx.clone();
+                            let name = req_result.name.clone();
+                            let method = col
+                                .requests
+                                .iter()
+                                .find(|r| r.name == name)
+                                .map(|r| r.method.clone())
+                                .unwrap_or_default();
+                            let duration_ms = req_result.duration_ms;
+                            let fields = outcome_fields(req_result);
+                            async move {
+                                let _ = tx.send((iteration, Some((name, method, duration_ms, fields))));
+                            }
+                        },
+                    )
+                    .await;
+
+                    if fail_fast && !col_result.passed() {
+                        flag.store(true, std::sync::atomic::Ordering::Release);
                     }
-                },
-            )
-            .await
+                });
+            }
+
+            while join_set.join_next().await.is_some() {}
         });
 
         let mut passed_count = 0usize;
         let mut failed_count = 0usize;
+        let mut skipped_count = 0usize;
         let mut total_duration_ms: u64 = 0;
 
-        while let Some((name, duration_ms, fields)) = rx.recv().await {
-            let (passed, status, failures, error, response_body, response_headers, request_body, url) =
-                fields;
-
-            if passed {
-                passed_count += 1;
-            } else {
-                failed_count += 1;
+        while let Some((iteration, payload)) = rx.recv().await {
+            match payload {
+                None => {
+                    if repeats > 1 {
+                        send_event(
+                            socket,
+                            WsEvent::IterationStarted {
+                                iteration,
+                                row: std::collections::HashMap::new(),
+                            },
+                        )
+                        .await;
+                    }
+                }
+                Some((name, method, duration_ms, fields)) => {
+                    let (passed, status, failures, error, response_body, response_headers, request_body, url, logs, passed_assertions) = fields;
+                    if passed {
+                        passed_count += 1;
+                    } else if error.as_deref() == Some("skipped") {
+                        skipped_count += 1;
+                    } else {
+                        failed_count += 1;
+                    }
+                    total_duration_ms += duration_ms;
+                    send_event(
+                        socket,
+                        WsEvent::RequestCompleted {
+                            name,
+                            method,
+                            url,
+                            passed,
+                            status,
+                            duration_ms,
+                            failures,
+                            error,
+                            response_body,
+                            response_headers,
+                            request_body,
+                            logs,
+                            passed_assertions,
+                        },
+                    )
+                    .await;
+                }
             }
-
-            total_duration_ms += duration_ms;
-
-            let method = method_map.get(&name).cloned().unwrap_or_default();
-
-            send_event(
-                socket,
-                WsEvent::RequestCompleted {
-                    name,
-                    method,
-                    url,
-                    passed,
-                    status,
-                    duration_ms,
-                    failures,
-                    error,
-                    response_body,
-                    response_headers,
-                    request_body,
-                },
-            )
-            .await;
         }
 
         let _ = runner.await;
 
-        let total_requests = passed_count + failed_count;
-        let avg_response_ms = if total_requests > 0 {
-            total_duration_ms / total_requests as u64
+        let counted = passed_count + failed_count;
+        let avg_response_ms = if counted > 0 {
+            total_duration_ms / counted as u64
         } else {
             0
         };
@@ -383,6 +474,7 @@ async fn run_collection_and_stream(
             WsEvent::RunFinished {
                 passed: passed_count,
                 failed: failed_count,
+                skipped: skipped_count,
                 total_duration_ms,
                 avg_response_ms,
             },
@@ -393,13 +485,14 @@ async fn run_collection_and_stream(
     Ok(())
 }
 
-/// Decompose a [`RequestOutcome`] and optional HTTP response into the fields needed by
-/// [`WsEvent::RequestCompleted`].
+/// Decompose a [`RequestResult`] into the fields needed by [`WsEvent::RequestCompleted`].
 ///
-/// `response` is `None` when a stopping error occurred before the HTTP phase.
-///
-/// Returns an [`OutcomeFields`] tuple: `(passed, status, failures, error, response_body, response_headers, request_body, url)`.
-fn outcome_fields(outcome: &RequestOutcome, response: &Option<HttpResponse>) -> OutcomeFields {
+/// Returns an [`OutcomeFields`] tuple.
+fn outcome_fields(req_result: &RequestResult) -> OutcomeFields {
+    let outcome = &req_result.outcome;
+    let response = &req_result.response;
+    let logs = req_result.logs.clone();
+    let passed_assertions = req_result.passed_assertions.clone();
     let status = response.as_ref().map(|r| r.status);
     let response_body = response.as_ref().map(|r| truncate_body(&r.body));
     let response_headers = response.as_ref().map(|r| r.headers.clone());
@@ -410,6 +503,17 @@ fn outcome_fields(outcome: &RequestOutcome, response: &Option<HttpResponse>) -> 
         .as_ref()
         .map(|r| r.url.clone())
         .unwrap_or_default();
+    let console_logs: Vec<ConsoleLog> = logs
+        .into_iter()
+        .map(|e| ConsoleLog {
+            level: match e.level {
+                LogLevel::Log => "log",
+                LogLevel::Warn => "warn",
+                LogLevel::Error => "error",
+            },
+            message: e.message,
+        })
+        .collect();
     match outcome {
         RequestOutcome::Passed => (
             true,
@@ -420,6 +524,8 @@ fn outcome_fields(outcome: &RequestOutcome, response: &Option<HttpResponse>) -> 
             response_headers,
             request_body,
             url,
+            console_logs,
+            passed_assertions,
         ),
         RequestOutcome::AssertionsFailed(failures) => {
             let msgs = failures.iter().map(format_failure).collect();
@@ -432,6 +538,8 @@ fn outcome_fields(outcome: &RequestOutcome, response: &Option<HttpResponse>) -> 
                 response_headers,
                 request_body,
                 url,
+                console_logs,
+                passed_assertions,
             )
         }
         RequestOutcome::Error(e) => (
@@ -443,6 +551,8 @@ fn outcome_fields(outcome: &RequestOutcome, response: &Option<HttpResponse>) -> 
             response_headers,
             request_body,
             url,
+            console_logs,
+            vec![],
         ),
         RequestOutcome::Skipped => (
             false,
@@ -453,6 +563,8 @@ fn outcome_fields(outcome: &RequestOutcome, response: &Option<HttpResponse>) -> 
             response_headers,
             request_body,
             url,
+            console_logs,
+            vec![],
         ),
     }
 }
@@ -460,7 +572,7 @@ fn outcome_fields(outcome: &RequestOutcome, response: &Option<HttpResponse>) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use strex_core::{AssertionFailure, AssertionType};
+    use strex_core::{AssertionFailure, AssertionType, HttpResponse};
 
     #[test]
     fn format_failure_status() {
@@ -535,6 +647,31 @@ mod tests {
         assert_eq!(cfg.data.as_deref(), Some("data.csv"));
         assert_eq!(cfg.concurrency, 4);
         assert!(cfg.fail_fast);
+        assert!(cfg.max_iterations.is_none());
+    }
+
+    #[test]
+    fn run_config_deserializes_max_iterations() {
+        let json = r#"{"collection":"col.yaml","max_iterations":5}"#;
+        let cfg: RunConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.max_iterations, Some(5));
+        assert!(cfg.repeat_iterations.is_none());
+    }
+
+    #[test]
+    fn run_config_deserializes_repeat_iterations() {
+        let json = r#"{"collection":"col.yaml","repeat_iterations":3}"#;
+        let cfg: RunConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.repeat_iterations, Some(3));
+        assert!(cfg.max_iterations.is_none());
+    }
+
+    #[test]
+    fn run_config_repeat_iterations_with_concurrency() {
+        let json = r#"{"collection":"col.yaml","repeat_iterations":5,"concurrency":3}"#;
+        let cfg: RunConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.repeat_iterations, Some(5));
+        assert_eq!(cfg.concurrency, 3);
     }
 
     #[test]
@@ -546,8 +683,16 @@ mod tests {
 
     #[test]
     fn outcome_fields_passed() {
-        let (passed, status, failures, error, body, headers, _request_body, _url) =
-            outcome_fields(&RequestOutcome::Passed, &None);
+        let req_result = RequestResult {
+            name: "test".into(),
+            outcome: RequestOutcome::Passed,
+            duration_ms: 0,
+            response: None,
+            logs: vec![],
+            passed_assertions: vec![],
+        };
+        let (passed, status, failures, error, body, headers, _request_body, _url, _logs, _passed) =
+            outcome_fields(&req_result);
         assert!(passed);
         assert!(status.is_none());
         assert!(failures.is_empty());
@@ -564,8 +709,16 @@ mod tests {
             actual: "500".into(),
             path: None,
         }];
-        let (passed, _status, failures, error, _body, _headers, _request_body, _url) =
-            outcome_fields(&RequestOutcome::AssertionsFailed(failures_in), &None);
+        let req_result = RequestResult {
+            name: "test".into(),
+            outcome: RequestOutcome::AssertionsFailed(failures_in),
+            duration_ms: 0,
+            response: None,
+            logs: vec![],
+            passed_assertions: vec![],
+        };
+        let (passed, _status, failures, error, _body, _headers, _request_body, _url, _logs, _passed) =
+            outcome_fields(&req_result);
         assert!(!passed);
         assert_eq!(failures, vec!["status expected 200, got 500"]);
         assert!(error.is_none());
@@ -597,7 +750,15 @@ mod tests {
             request_body: Some("hello=world".to_string()),
             url: String::new(),
         });
-        let (.., request_body, _url) = outcome_fields(&RequestOutcome::Passed, &response);
+        let req_result = RequestResult {
+            name: "test".into(),
+            outcome: RequestOutcome::Passed,
+            duration_ms: 0,
+            response,
+            logs: vec![],
+            passed_assertions: vec![],
+        };
+        let (.., request_body, _url, _logs, _passed) = outcome_fields(&req_result);
         assert_eq!(request_body.as_deref(), Some("hello=world"));
     }
 
@@ -614,7 +775,15 @@ mod tests {
             request_body: Some(long_body),
             url: String::new(),
         });
-        let (.., request_body, _url) = outcome_fields(&RequestOutcome::Passed, &response);
+        let req_result = RequestResult {
+            name: "test".into(),
+            outcome: RequestOutcome::Passed,
+            duration_ms: 0,
+            response,
+            logs: vec![],
+            passed_assertions: vec![],
+        };
+        let (.., request_body, _url, _logs, _passed) = outcome_fields(&req_result);
         let rb = request_body.unwrap();
         assert!(rb.ends_with(" [truncated]"));
         assert_eq!(rb.len(), BODY_LIMIT + " [truncated]".len());

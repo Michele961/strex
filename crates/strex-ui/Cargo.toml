@@ -21,8 +21,12 @@ tower-http = { version = "0.5", features = ["cors"] }
 mime_guess = "2"
 # Collection runner — execute collections and stream results
 strex-core = { path = "../strex-core" }
+# HTTP client — shared per-run client for connection pooling across concurrent iterations
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 # Application-level error handling
 anyhow = "1"
+# Timestamp generation for run history filenames
+chrono = "0.4"
 
 [dev-dependencies]
 # Temporary directories for integration tests
