@@ -12,7 +12,6 @@ pub mod junit;
 ///
 /// Carries both the parsed collection (for request metadata like HTTP method)
 /// and the execution outcome.
-#[allow(dead_code)]
 pub struct RunResult {
     /// The parsed collection — used by formatters to access request methods.
     pub collection: Collection,
@@ -22,7 +21,6 @@ pub struct RunResult {
 
 impl RunResult {
     /// Returns `true` if all requests/iterations passed.
-    #[allow(dead_code)]
     pub fn passed(&self) -> bool {
         match &self.outcome {
             RunOutcome::Single(r) => r.passed(),
@@ -32,7 +30,6 @@ impl RunResult {
 }
 
 /// The execution outcome variant.
-#[allow(dead_code)]
 pub enum RunOutcome {
     /// A single collection run (no data file).
     Single(CollectionResult),
@@ -47,7 +44,6 @@ pub enum RunOutcome {
 /// - `JsonPath` → `"jsonPath expected {expected}, got {actual}"`
 /// - `Header`   → `"header expected {expected}, got {actual}"`
 /// - `Script`   → `"{expected}"` (`actual` is always empty for script assertions)
-#[allow(dead_code)]
 pub fn format_failure(failure: &AssertionFailure) -> String {
     match failure.assertion_type {
         AssertionType::Status => {
@@ -73,7 +69,6 @@ pub fn format_failure(failure: &AssertionFailure) -> String {
 }
 
 /// Dispatch formatting to the selected output formatter, writing to `writer`.
-#[allow(dead_code)]
 pub fn format(
     result: &RunResult,
     fmt: &OutputFormat,
