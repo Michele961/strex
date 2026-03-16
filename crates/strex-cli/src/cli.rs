@@ -17,6 +17,8 @@ pub enum Command {
     Run(RunArgs),
     /// Validate a collection file without making HTTP requests
     Validate(ValidateArgs),
+    /// Start the web UI server and open the browser
+    Ui(UiArgs),
 }
 
 /// Arguments for the `run` subcommand.
@@ -46,6 +48,17 @@ pub struct RunArgs {
 pub struct ValidateArgs {
     /// Path to the YAML collection file
     pub collection: PathBuf,
+}
+
+/// Arguments for the `ui` subcommand.
+#[derive(Args)]
+pub struct UiArgs {
+    /// TCP port for the UI server
+    #[arg(long, default_value = "7878")]
+    pub port: u16,
+    /// Pre-select a collection file in the UI
+    #[arg(long)]
+    pub collection: Option<std::path::PathBuf>,
 }
 
 /// Output format for the `run` subcommand.

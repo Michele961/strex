@@ -24,5 +24,6 @@ async fn run(cli: Cli) -> anyhow::Result<i32> {
     match cli.command {
         Command::Run(args) => commands::run::execute(args).await,
         Command::Validate(args) => commands::validate::execute(args).await,
+        Command::Ui(args) => commands::ui::execute(args).await,
     }
 }
