@@ -8,7 +8,6 @@ use crate::output::{format_failure, RunOutcome, RunResult};
 ///
 /// Zips `collection.requests` with `request_results` — both are in declaration order,
 /// so index `i` in `request_results` corresponds to `collection.requests[i]`.
-#[allow(dead_code)]
 pub fn print(result: &RunResult, writer: &mut impl Write) -> anyhow::Result<()> {
     let method_width = result
         .collection
