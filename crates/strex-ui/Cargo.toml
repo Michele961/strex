@@ -25,4 +25,5 @@ strex-core = { path = "../strex-core" }
 anyhow = "1"
 
 [dev-dependencies]
+# Temporary directories for integration tests
 tempfile = "3"

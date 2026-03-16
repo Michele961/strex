@@ -1,3 +1,5 @@
+//! strex-ui — Axum web server and embedded Svelte frontend for `strex ui`.
+
 #![deny(clippy::all)]
 
 mod collections;
@@ -6,4 +8,4 @@ mod routes;
 mod server;
 mod ws;
 
-pub use server::{ServerOpts, start_server};
+pub use server::{start_server, ServerOpts};
