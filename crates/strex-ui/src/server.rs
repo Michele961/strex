@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use axum::{
-    routing::{any, get},
+    routing::{any, get, post},
     Router,
 };
 use tower_http::cors::CorsLayer;
@@ -37,6 +37,12 @@ pub async fn start_server(opts: ServerOpts) -> anyhow::Result<()> {
             "/api/collection-requests",
             get(request_list::list_collection_requests),
         )
+        .route("/api/data-preview", get(routes::data_preview))
+        .route(
+            "/api/history",
+            post(routes::save_history).get(routes::list_history),
+        )
+        .route("/api/history/:id", get(routes::get_history))
         .route("/ws", any(ws::ws_handler))
         .layer(CorsLayer::permissive());
 
