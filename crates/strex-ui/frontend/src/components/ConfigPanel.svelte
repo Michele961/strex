@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { fetchCollections, fetchCollectionRequests } from '../lib/api'
+  import { fetchCollections, fetchCollectionRequests, fetchDataPreview } from '../lib/api'
   import type { RunConfig, RequestSequenceItem } from '../lib/types'
 
   interface Props {
@@ -14,9 +14,13 @@
   let dataFile = $state('')
   let concurrency = $state(1)
   let failFast = $state(false)
+  let iterations = $state<number | null>(null)
   let activeTab = $state<'functional' | 'performance'>('functional')
   let requestSequence = $state<RequestSequenceItem[]>([])
   let sequenceLoading = $state(false)
+  let dataPreview = $state<Record<string, string>[]>([])
+  let dataPreviewError = $state<string | null>(null)
+  let dataPreviewLoading = $state(false)
 
   const methodColors: Record<string, string> = {
     GET: '#61affe',
@@ -55,13 +59,43 @@
       })
   })
 
+  // Load data preview when data file changes
+  $effect(() => {
+    const file = dataFile.trim()
+    if (!file) {
+      dataPreview = []
+      dataPreviewError = null
+      return
+    }
+    dataPreviewLoading = true
+    dataPreviewError = null
+    fetchDataPreview(file)
+      .then((rows) => {
+        dataPreview = rows
+      })
+      .catch((e: unknown) => {
+        dataPreview = []
+        dataPreviewError = e instanceof Error ? e.message : String(e)
+      })
+      .finally(() => {
+        dataPreviewLoading = false
+      })
+  })
+
+  const dataPreviewColumns = $derived(
+    dataPreview.length > 0 ? Object.keys(dataPreview[0]) : []
+  )
+
   function handleRun() {
     if (!selectedCollection) return
+    const iterNum = iterations != null ? Number(iterations) : null
     onRun({
       collection: selectedCollection,
       data: dataFile || undefined,
-      concurrency,
+      concurrency: Number(concurrency),
       fail_fast: failFast,
+      max_iterations: dataFile.trim() ? (iterNum ?? undefined) : undefined,
+      repeat_iterations: !dataFile.trim() ? (iterNum ?? undefined) : undefined,
     })
   }
 </script>
@@ -127,6 +161,48 @@
       </label>
 
       <label class="field">
+        <span>Iterations <em>(optional)</em></span>
+        <input
+          type="number"
+          min="1"
+          placeholder={dataFile.trim() ? 'All rows' : 'Run once'}
+          bind:value={iterations}
+        />
+      </label>
+
+      {#if dataFile.trim()}
+        {#if dataPreviewLoading}
+          <p class="hint">Loading preview…</p>
+        {:else if dataPreviewError}
+          <p class="hint error">{dataPreviewError}</p>
+        {:else if dataPreview.length > 0}
+          <div class="data-preview">
+            <p class="preview-title">Data preview ({dataPreview.length} row{dataPreview.length === 1 ? '' : 's'})</p>
+            <div class="preview-table-wrap">
+              <table class="preview-table">
+                <thead>
+                  <tr>
+                    {#each dataPreviewColumns as col}
+                      <th>{col}</th>
+                    {/each}
+                  </tr>
+                </thead>
+                <tbody>
+                  {#each dataPreview as row}
+                    <tr>
+                      {#each dataPreviewColumns as col}
+                        <td>{row[col] ?? ''}</td>
+                      {/each}
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        {/if}
+      {/if}
+
+      <label class="field">
         <span>Concurrency</span>
         <input type="number" min="1" max="50" bind:value={concurrency} />
       </label>
@@ -160,6 +236,7 @@
     border-right: 1px solid #2a2a4a;
     height: 100vh;
     box-sizing: border-box;
+    overflow-y: auto;
   }
 
   .panel-header h1 {
@@ -257,6 +334,10 @@
     margin: 0;
   }
 
+  .hint.error {
+    color: #f87171;
+  }
+
   .run-button {
     margin-top: 8px;
     padding: 12px;
@@ -314,4 +395,56 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+
+  .data-preview {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .preview-title {
+    margin: 0;
+    font-size: 0.78rem;
+    color: #888;
+  }
+
+  .preview-table-wrap {
+    overflow-x: auto;
+    border-radius: 4px;
+    border: 1px solid #2a2a4a;
+  }
+
+  .preview-table {
+    border-collapse: collapse;
+    font-size: 0.72rem;
+    width: 100%;
+    color: #ccc;
+  }
+
+  .preview-table th {
+    background: #0f0f23;
+    color: #ff6b35;
+    padding: 4px 8px;
+    text-align: left;
+    white-space: nowrap;
+    border-bottom: 1px solid #2a2a4a;
+  }
+
+  .preview-table td {
+    padding: 4px 8px;
+    border-bottom: 1px solid #1e1e38;
+    white-space: nowrap;
+    max-width: 120px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .preview-table tr:last-child td {
+    border-bottom: none;
+  }
+
+  .preview-table tr:nth-child(even) td {
+    background: #16162a;
+  }
 </style>
+

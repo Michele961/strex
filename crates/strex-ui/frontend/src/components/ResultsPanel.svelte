@@ -7,19 +7,20 @@
     items: ResultItem[]
     running: boolean
     total: number
-    summary: { passed: number; failed: number; total_duration_ms: number; avg_response_ms: number } | null
+    summary: { passed: number; failed: number; skipped: number; total_duration_ms: number; avg_response_ms: number } | null
   }
 
   let { items, running, total, summary }: Props = $props()
 
-  type FilterTab = 'all' | 'passed' | 'failed' | 'errors'
+  type FilterTab = 'all' | 'passed' | 'failed' | 'skipped' | 'errors'
   let activeFilter = $state<FilterTab>('all')
 
   // Only request-type items, for stats and filtering
   let requestItems = $derived(items.filter((i): i is Extract<ResultItem, { type: 'request' }> => i.type === 'request'))
 
   let livePassedCount = $derived(requestItems.filter((r) => r.result.passed).length)
-  let liveFailedCount = $derived(requestItems.filter((r) => !r.result.passed).length)
+  let liveFailedCount = $derived(requestItems.filter((r) => !r.result.passed && r.result.error !== 'skipped').length)
+  let liveSkippedCount = $derived(requestItems.filter((r) => r.result.error === 'skipped').length)
 
   // When filtering, keep iteration separators only in 'all' view
   let filteredItems = $derived(
@@ -29,8 +30,9 @@
           if (i.type === 'iteration') return false
           const r = i.result
           if (activeFilter === 'passed') return r.passed && !r.error
-          if (activeFilter === 'failed') return !r.passed && !r.error
-          return !!r.error
+          if (activeFilter === 'failed') return !r.passed && r.error !== 'skipped' && !r.error
+          if (activeFilter === 'skipped') return r.error === 'skipped'
+          return !!r.error && r.error !== 'skipped'
         })
   )
 
@@ -56,6 +58,10 @@
       <span class="stat passed-stat">{livePassedCount} passed</span>
       <span class="dot">·</span>
       <span class="stat failed-stat">{liveFailedCount} failed</span>
+      {#if liveSkippedCount > 0}
+        <span class="dot">·</span>
+        <span class="stat skipped-stat">{liveSkippedCount} skipped</span>
+      {/if}
       {#if summary}
         <span class="dot">·</span>
         <span class="stat">{summary.total_duration_ms}ms total</span>
@@ -65,7 +71,7 @@
     </div>
 
     <div class="filter-tabs">
-      {#each (['all', 'passed', 'failed', 'errors'] as FilterTab[]) as tab}
+      {#each (['all', 'passed', 'failed', 'skipped', 'errors'] as FilterTab[]) as tab}
         <button
           class="filter-tab"
           class:active={activeFilter === tab}
@@ -163,6 +169,10 @@
 
   .failed-stat {
     color: #f93e3e;
+  }
+
+  .skipped-stat {
+    color: #fbbf24;
   }
 
   .dot {

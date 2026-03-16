@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { RequestResult } from '../lib/types'
+  import type { RequestResult, ConsoleLog } from '../lib/types'
 
   interface Props {
     result: RequestResult
@@ -16,7 +16,7 @@
   }
 
   let expanded = $state(false)
-  let activeTab = $state<'request' | 'response' | 'headers'>('response')
+  let activeTab = $state<'request' | 'response' | 'headers' | 'console' | 'assertions'>('response')
   let isTruncated = $derived(result.response_body?.endsWith(' [truncated]') ?? false)
 
   interface ParsedFailure {
@@ -42,20 +42,24 @@
 
   // Status badge label and variant
   let badge = $derived(
-    result.error
-      ? { label: '⚠ error', variant: 'error' as const }
-      : result.passed
-        ? { label: '✓ passed', variant: 'passed' as const }
-        : {
-            label: `✗ ${result.failures.length} failed`,
-            variant: 'failed' as const,
-          }
+    result.error === 'skipped'
+      ? { label: '⊘ skipped', variant: 'skipped' as const }
+      : result.error
+        ? { label: '⚠ error', variant: 'error' as const }
+        : result.passed
+          ? { label: '✓ passed', variant: 'passed' as const }
+          : {
+              label: `✗ ${result.failures.length} failed`,
+              variant: 'failed' as const,
+            }
   )
 
-  let hasInlineContent = $derived(!result.passed || !!result.error)
+  let hasInlineContent = $derived(result.error !== 'skipped' && (!result.passed || !!result.error))
+  let hasLogs = $derived(result.logs.length > 0)
+  let hasAssertions = $derived(result.passed_assertions.length > 0 || result.failures.length > 0)
 </script>
 
-<div class="request-row" class:failed={!result.passed} class:errored={!!result.error}>
+<div class="request-row" class:failed={!result.passed && result.error !== 'skipped'} class:errored={!!result.error && result.error !== 'skipped'} class:skipped={result.error === 'skipped'}>
   <!-- Clickable header row -->
   <div
     class="row-main"
@@ -138,6 +142,24 @@
         >
           Headers
         </button>
+        {#if hasLogs}
+          <button
+            class="tab"
+            class:active={activeTab === 'console'}
+            onclick={() => (activeTab = 'console')}
+          >
+            Console
+          </button>
+        {/if}
+        {#if hasAssertions}
+          <button
+            class="tab"
+            class:active={activeTab === 'assertions'}
+            onclick={() => (activeTab = 'assertions')}
+          >
+            Assertions
+          </button>
+        {/if}
       </div>
 
       {#if activeTab === 'request'}
@@ -151,7 +173,7 @@
         {#if isTruncated}
           <p class="truncated-note">Response truncated at 10 KB</p>
         {/if}
-      {:else}
+      {:else if activeTab === 'headers'}
         <table class="headers-table">
           <tbody>
             {#each Object.entries(result.response_headers ?? {}) as [key, value]}
@@ -162,6 +184,32 @@
             {/each}
           </tbody>
         </table>
+      {:else if activeTab === 'console'}
+        <div class="console-log-list">
+          {#each result.logs as entry}
+            <div class="console-entry console-entry--{entry.level}">
+              <span class="console-level">{entry.level}</span>
+              <span class="console-message">{entry.message}</span>
+            </div>
+          {/each}
+        </div>
+      {:else if activeTab === 'assertions'}
+        <div class="assertions-list">
+          {#each result.passed_assertions as desc}
+            <div class="assertion-row assertion-row--passed">
+              <span class="assertion-check">✓</span>
+              <span class="assertion-desc">{desc}</span>
+            </div>
+          {/each}
+          {#each parsedFailures as f}
+            <div class="assertion-row assertion-row--failed">
+              <span class="assertion-check">✗</span>
+              <span class="assertion-desc">
+                {f.kind}{f.actual ? ` — expected ${f.expected}, got ${f.actual}` : f.expected !== f.kind ? ` — ${f.expected}` : ''}
+              </span>
+            </div>
+          {/each}
+        </div>
       {/if}
     </div>
   {/if}
@@ -282,6 +330,17 @@
     background: rgba(252, 161, 48, 0.12);
     color: #fca130;
     border: 1px solid rgba(252, 161, 48, 0.25);
+  }
+
+  .badge--skipped {
+    background: rgba(251, 191, 36, 0.1);
+    color: #fbbf24;
+    border: 1px solid rgba(251, 191, 36, 0.2);
+  }
+
+  .request-row.skipped {
+    border-left-color: #fbbf24;
+    opacity: 0.65;
   }
 
   .chevron {
@@ -450,4 +509,87 @@
     padding: 4px 0;
     word-break: break-all;
   }
+
+  .console-log-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    background: #0a0a1a;
+    border: 1px solid #1e1e3a;
+    border-radius: 4px;
+    padding: 6px 0;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 0.75rem;
+    max-height: 300px;
+    overflow-y: auto;
+  }
+
+  .console-entry {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    padding: 3px 10px;
+  }
+
+  .console-entry--log .console-message { color: #888; }
+  .console-entry--warn .console-message { color: #fca130; }
+  .console-entry--error .console-message { color: #f93e3e; }
+
+  .console-level {
+    font-size: 0.65rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    min-width: 36px;
+    white-space: nowrap;
+  }
+
+  .console-entry--log .console-level { color: #444; }
+  .console-entry--warn .console-level { color: #c07010; }
+  .console-entry--error .console-level { color: #c02020; }
+
+  .console-message {
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+
+  /* Assertions tab */
+  .assertions-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    background: #0a0a1a;
+    border: 1px solid #1e1e3a;
+    border-radius: 4px;
+    padding: 6px 0;
+    font-size: 0.78rem;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    max-height: 300px;
+    overflow-y: auto;
+  }
+
+  .assertion-row {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 3px 12px;
+  }
+
+  .assertion-check {
+    font-size: 0.8rem;
+    font-weight: 700;
+    min-width: 14px;
+    flex-shrink: 0;
+  }
+
+  .assertion-row--passed .assertion-check { color: #49cc90; }
+  .assertion-row--failed .assertion-check { color: #f93e3e; }
+
+  .assertion-desc {
+    color: #c8c8d8;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+
+  .assertion-row--failed .assertion-desc { color: #f98080; }
 </style>
