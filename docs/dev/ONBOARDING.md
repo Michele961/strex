@@ -57,6 +57,36 @@ Both checks run in CI and will block a merge if they fail.
 
 ---
 
+## Frontend development (strex ui)
+
+The web UI is a Svelte + Vite app in `crates/strex-ui/frontend/`. It is pre-built and the `dist/` output is committed — you only need Node.js if you're modifying the frontend.
+
+**Prerequisites:** Node.js 20+
+
+**Rebuild after editing Svelte files:**
+
+```bash
+cd crates/strex-ui/frontend
+npm install      # first time only
+npm run build    # writes to dist/ — commit the result
+```
+
+**Dev server with hot reload** (while the Rust server is running separately):
+
+```bash
+# Terminal 1: start the Rust backend
+strex ui --port 7878
+
+# Terminal 2: start the Vite dev server (proxies /api and /ws to port 7878)
+cd crates/strex-ui/frontend
+npm run dev
+# open http://localhost:5173
+```
+
+Changes to `.svelte` files appear instantly in the dev server. When done, run `npm run build` and commit the updated `dist/`.
+
+---
+
 ## Crate map
 
 strex is a Cargo workspace with three crates:

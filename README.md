@@ -137,6 +137,24 @@ strex validate api.yaml
 
 ---
 
+## Web UI
+
+Launch a local browser UI to configure and run collections visually:
+
+```bash
+strex ui
+# Opens http://localhost:7878 in your browser
+```
+
+Select a collection, configure options, and click Run. Results stream in live as each request completes.
+
+```bash
+strex ui --port 9000            # custom port
+strex ui --collection api.yaml  # pre-select a collection
+```
+
+---
+
 ## Exit codes
 
 | Code | Meaning |
