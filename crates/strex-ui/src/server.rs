@@ -20,6 +20,8 @@ pub struct ServerOpts {
 
 /// Start the Axum server, print the URL, open the browser, and block until shutdown.
 pub async fn start_server(opts: ServerOpts) -> anyhow::Result<()> {
+    // TODO: pass opts.collection to the frontend as a query param on the initial
+    // page load so `strex ui --collection api.yaml` pre-selects that file.
     let _ = opts.collection;
 
     let app = Router::new()

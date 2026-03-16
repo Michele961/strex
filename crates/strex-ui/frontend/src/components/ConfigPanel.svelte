@@ -17,10 +17,12 @@
   let activeTab = $state<'functional' | 'performance'>('functional')
 
   $effect(() => {
-    fetchCollections().then((files) => {
-      collections = files
-      if (files.length > 0) selectedCollection = files[0]
-    })
+    fetchCollections()
+      .then((files) => {
+        collections = files
+        if (files.length > 0) selectedCollection = files[0]
+      })
+      .catch((e: unknown) => console.error('Failed to load collections:', e))
   })
 
   function handleRun() {

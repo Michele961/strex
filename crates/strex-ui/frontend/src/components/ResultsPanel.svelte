@@ -26,7 +26,7 @@
     </div>
 
     <div class="results-list">
-      {#each results as result (result.name + result.duration_ms)}
+      {#each results as result, i (i)}
         <RequestRow {result} />
       {/each}
     </div>

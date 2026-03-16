@@ -5,8 +5,7 @@ use std::path::Path;
 /// Scan `dir` for `.yaml` files (non-recursive) and return their filenames as strings.
 ///
 /// Returns an empty vec if the directory cannot be read. Results are sorted alphabetically.
-#[allow(dead_code)]
-pub fn scan_yaml_files(dir: &Path) -> Vec<String> {
+pub(crate) fn scan_yaml_files(dir: &Path) -> Vec<String> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return vec![];
     };

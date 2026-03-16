@@ -7,8 +7,7 @@ use serde::Serialize;
 /// Tagged with `"type"` field in JSON (e.g. `{"type":"run_started","total":3}`).
 #[derive(Debug, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-#[allow(dead_code)]
-pub enum WsEvent {
+pub(crate) enum WsEvent {
     /// Sent once when the run begins.
     RunStarted {
         /// Total number of requests that will be executed.

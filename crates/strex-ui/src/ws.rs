@@ -8,7 +8,8 @@ use std::path::Path;
 
 use strex_core::{
     execute_collection, parse_collection, parse_csv, parse_json, run_collection_with_data,
-    AssertionFailure, AssertionType, DataRunOpts, ExecutionContext, RequestOutcome, RunnerOpts,
+    AssertionFailure, AssertionType, DataRunOpts, ExecutionContext, HttpResponse, RequestOutcome,
+    RunnerOpts,
 };
 
 use crate::events::WsEvent;
@@ -150,7 +151,8 @@ async fn run_collection_and_stream(
 
         for iter in &result.iterations {
             for req_result in &iter.collection_result.request_results {
-                let (passed, status, failures, error) = outcome_fields(&req_result.outcome);
+                let (passed, status, failures, error) =
+                    outcome_fields(&req_result.outcome, &req_result.response);
 
                 // Look up the method from the request name in the collection iteration's result.
                 // We don't have the collection struct here, so we emit an empty method string —
@@ -201,7 +203,8 @@ async fn run_collection_and_stream(
         let mut failed_count = 0usize;
 
         for req_result in &col_result.request_results {
-            let (passed, status, failures, error) = outcome_fields(&req_result.outcome);
+            let (passed, status, failures, error) =
+                outcome_fields(&req_result.outcome, &req_result.response);
 
             if passed {
                 passed_count += 1;
@@ -242,17 +245,24 @@ async fn run_collection_and_stream(
     Ok(())
 }
 
-/// Decompose a [`RequestOutcome`] into the fields needed by [`WsEvent::RequestCompleted`].
+/// Decompose a [`RequestOutcome`] and optional HTTP response into the fields needed by
+/// [`WsEvent::RequestCompleted`].
+///
+/// `response` is `None` when a stopping error occurred before the HTTP phase.
 ///
 /// Returns `(passed, status, failures, error)`.
-fn outcome_fields(outcome: &RequestOutcome) -> (bool, Option<u16>, Vec<String>, Option<String>) {
+fn outcome_fields(
+    outcome: &RequestOutcome,
+    response: &Option<HttpResponse>,
+) -> (bool, Option<u16>, Vec<String>, Option<String>) {
+    let status = response.as_ref().map(|r| r.status);
     match outcome {
-        RequestOutcome::Passed => (true, None, vec![], None),
+        RequestOutcome::Passed => (true, status, vec![], None),
         RequestOutcome::AssertionsFailed(failures) => {
             let msgs = failures.iter().map(format_failure).collect();
-            (false, None, msgs, None)
+            (false, status, msgs, None)
         }
-        RequestOutcome::Error(e) => (false, None, vec![], Some(e.to_string())),
+        RequestOutcome::Error(e) => (false, status, vec![], Some(e.to_string())),
     }
 }
 
@@ -333,8 +343,15 @@ mod tests {
     }
 
     #[test]
+    fn error_json_has_correct_shape() {
+        let json = serde_json::json!({ "type": "error", "message": "test" }).to_string();
+        assert!(json.contains(r#""type":"error""#));
+        assert!(json.contains(r#""message":"test""#));
+    }
+
+    #[test]
     fn outcome_fields_passed() {
-        let (passed, status, failures, error) = outcome_fields(&RequestOutcome::Passed);
+        let (passed, status, failures, error) = outcome_fields(&RequestOutcome::Passed, &None);
         assert!(passed);
         assert!(status.is_none());
         assert!(failures.is_empty());
@@ -349,7 +366,7 @@ mod tests {
             actual: "500".into(),
         }];
         let (passed, _status, failures, error) =
-            outcome_fields(&RequestOutcome::AssertionsFailed(failures_in));
+            outcome_fields(&RequestOutcome::AssertionsFailed(failures_in), &None);
         assert!(!passed);
         assert_eq!(failures, vec!["status expected 200, got 500"]);
         assert!(error.is_none());
