@@ -1,0 +1,84 @@
+name: "03 · Variables and Environment"
+version: "1.0"
+
+# Tutorial 03 — Variables and Environment
+#
+# Run with:
+#
+#   strex run examples/tutorials/03-variables-and-environment.yaml
+#
+# What you learn here:
+#   - environment — static, immutable key/value pairs (config, base URLs, etc.)
+#   - variables   — mutable collection-level state, initialised here and
+#                   updated at runtime by scripts
+#   - {{name}}    — interpolation syntax, resolved before every request is sent
+#
+# Variable resolution order (highest priority first):
+#   1. Data row (--data flag, covered in tutorial 06)
+#   2. Collection variables  ← set / updated by scripts
+#   3. Environment           ← declared below, never changed at runtime
+#
+# Using environment for base URLs means you only have to change one line when
+# pointing at staging vs production.
+
+environment:
+  baseUrl: https://jsonplaceholder.typicode.com
+  # Any key/value you declare here is available as {{keyName}} in every
+  # request in this collection.
+
+variables:
+  # Declare all variables your scripts will write to.
+  # null means "no value yet" — the variable exists but is empty.
+  userId: null
+  postId: null
+
+requests:
+  # ── Step 1: environment interpolation ─────────────────────────────────────
+  # {{baseUrl}} is resolved from the environment block above.
+  # No script needed — just plain interpolation.
+  - name: Use baseUrl from environment
+    method: GET
+    url: "{{baseUrl}}/users/1"
+    assertions:
+      - status: 200
+      - jsonPath: "$.id"
+        exists: true
+
+  # ── Step 2: write a variable ───────────────────────────────────────────────
+  # post_script runs after the HTTP response arrives.
+  # variables.set(key, value) stores the value for all subsequent requests.
+  - name: Extract userId into a variable
+    method: GET
+    url: "{{baseUrl}}/users/1"
+    assertions:
+      - status: 200
+    post_script: |
+      const user = response.json();
+      variables.set("userId", String(user.id));
+      // console.log writes to the run output in verbose mode
+      console.log("userId set to:", user.id);
+
+  # ── Step 3: read a variable ────────────────────────────────────────────────
+  # {{userId}} is replaced with the value set in step 2 before the URL is sent.
+  - name: Use userId in the URL
+    method: GET
+    url: "{{baseUrl}}/posts?userId={{userId}}"
+    assertions:
+      - status: 200
+      # The first post's userId should equal the variable we set.
+      - jsonPath: "$[0].userId"
+        equals: "{{userId}}"
+    post_script: |
+      const posts = response.json();
+      variables.set("postId", String(posts[0].id));
+      console.log("postId set to:", posts[0].id);
+
+  # ── Step 4: use both variables ─────────────────────────────────────────────
+  # Both {{userId}} and {{postId}} are now live.
+  - name: Fetch the specific post
+    method: GET
+    url: "{{baseUrl}}/posts/{{postId}}"
+    assertions:
+      - status: 200
+      - jsonPath: "$.userId"
+        equals: "{{userId}}"

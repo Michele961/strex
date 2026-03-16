@@ -1,0 +1,111 @@
+name: "04 · Request Chaining"
+version: "1.0"
+
+# Tutorial 04 — Request Chaining
+#
+# Run with:
+#
+#   strex run examples/tutorials/04-request-chaining.yaml
+#
+# What you learn here:
+#   - pre_script  — runs BEFORE the HTTP request is sent
+#                   · can modify variables used in headers / body / URL
+#                   · cannot access `response` (not sent yet)
+#   - post_script — runs AFTER the response arrives
+#                   · can read response.json(), response.text(), response.status,
+#                     response.headers, response.timing.total
+#                   · variables.set() here flow into every subsequent request
+#   - Chaining pattern: POST to create → GET to read → PUT to update → DELETE
+#
+# Scenario: simulate a create → read → update → delete lifecycle on a post.
+# JSONPlaceholder fakes writes (returns 200/201 but doesn't persist), which
+# is perfect for safe, repeatable tutorials.
+
+environment:
+  baseUrl: https://jsonplaceholder.typicode.com
+
+variables:
+  postId: null
+  postTitle: null
+
+requests:
+  # ── Step 1: pre_script sets a variable before the request fires ────────────
+  # pre_script runs before interpolation resolves the body.
+  # Here we use it to compute a dynamic title.
+  - name: Prepare title in pre_script
+    method: GET
+    url: "{{baseUrl}}/users/1"
+    pre_script: |
+      // Build a title that includes the current timestamp.
+      // This value will be available in {{postTitle}} from the next request onward.
+      const ts = new Date().toISOString();
+      variables.set("postTitle", "Tutorial post — " + ts);
+      console.log("title prepared:", variables.get("postTitle"));
+    assertions:
+      - status: 200
+
+  # ── Step 2: POST — create a resource, extract its id ──────────────────────
+  - name: Create post
+    method: POST
+    url: "{{baseUrl}}/posts"
+    headers:
+      Content-Type: application/json
+    body:
+      type: json
+      content:
+        title: "{{postTitle}}"
+        body: Written by strex tutorial 04.
+        userId: 1
+    assertions:
+      - status: 201
+      - jsonPath: "$.id"
+        exists: true
+      # The title we set in the pre_script should echo back from the server.
+      - jsonPath: "$.title"
+        contains: "Tutorial post"
+    post_script: |
+      const created = response.json();
+      // JSONPlaceholder fakes writes — it always returns id 101, which does not
+      // exist as a real resource. Use a known-good id (1) so the Read step works.
+      variables.set("postId", "1");
+      console.log("created post id:", created.id, "(using id 1 for read/update/delete)");
+
+  # ── Step 3: GET — read the resource by its id ──────────────────────────────
+  - name: Read post
+    method: GET
+    url: "{{baseUrl}}/posts/{{postId}}"
+    assertions:
+      - status: 200
+      - jsonPath: "$.id"
+        exists: true
+    post_script: |
+      const post = response.json();
+      console.log("read post title:", post.title);
+
+  # ── Step 4: PUT — replace the resource ────────────────────────────────────
+  - name: Update post
+    method: PUT
+    url: "{{baseUrl}}/posts/{{postId}}"
+    headers:
+      Content-Type: application/json
+    body:
+      type: json
+      content:
+        id: "{{postId}}"
+        title: Updated title
+        body: Updated body.
+        userId: 1
+    assertions:
+      - status: 200
+      - jsonPath: "$.title"
+        equals: "Updated title"
+
+  # ── Step 5: DELETE — remove the resource ──────────────────────────────────
+  - name: Delete post
+    method: DELETE
+    url: "{{baseUrl}}/posts/{{postId}}"
+    assertions:
+      # JSONPlaceholder returns 200 for DELETE (not 204), with an empty body {}.
+      - status: 200
+    post_script: |
+      console.log("post", variables.get("postId"), "deleted");

@@ -1,0 +1,73 @@
+name: "06 · Data-Driven Testing"
+version: "1.0"
+
+# Tutorial 06 — Data-Driven Testing
+#
+# Run the same collection once per row in a CSV or JSON file:
+#
+#   # CSV
+#   strex run examples/tutorials/06-data-driven.yaml \
+#             --data examples/tutorials/06-users.csv
+#
+#   # JSON
+#   strex run examples/tutorials/06-data-driven.yaml \
+#             --data examples/tutorials/06-users.json
+#
+#   # Run 3 rows concurrently instead of one-at-a-time
+#   strex run examples/tutorials/06-data-driven.yaml \
+#             --data examples/tutorials/06-users.csv \
+#             --concurrency 3
+#
+# What you learn here:
+#   - Data variables: columns from the CSV / keys from JSON objects
+#   - {{columnName}} interpolation — resolved from the current row
+#   - Variable isolation: each iteration starts with a fresh variable scope
+#                         (what one row's scripts write cannot leak to the next)
+#   - --concurrency N: run N rows at the same time (default: 1 = sequential)
+#   - --fail-fast: stop on the first failing row instead of running all rows
+#
+# Data variable priority:
+#   data row  >  collection variables  >  environment
+# If a CSV column has the same name as a collection variable, the data row wins.
+
+environment:
+  baseUrl: https://jsonplaceholder.typicode.com
+
+variables:
+  # Declared here so the collection is self-documenting.
+  # At runtime these are overridden by the data row values.
+  userId: null
+  expectedEmail: null
+
+requests:
+  # ── Step 1: use a data variable in the URL ─────────────────────────────────
+  # {{userId}} comes from the current CSV row / JSON object.
+  - name: Fetch user
+    method: GET
+    url: "{{baseUrl}}/users/{{userId}}"
+    assertions:
+      - status: 200
+      - jsonPath: "$.id"
+        exists: true
+      # Assert the email from the response equals the expected value in the row.
+      - jsonPath: "$.email"
+        equals: "{{expectedEmail}}"
+    post_script: |
+      const user = response.json();
+      // This variable is local to THIS iteration — it doesn't leak to other rows.
+      variables.set("username", user.username);
+      console.log("row userId=" + variables.get("userId") + " → username=" + user.username);
+
+  # ── Step 2: use a variable extracted in step 1 ────────────────────────────
+  # {{username}} was set by the post_script above — within this iteration only.
+  - name: Fetch posts for user
+    method: GET
+    url: "{{baseUrl}}/posts?userId={{userId}}"
+    assertions:
+      - status: 200
+      - jsonPath: "$[0].userId"
+        exists: true
+    post_script: |
+      const posts = response.json();
+      console.log("user", variables.get("username"), "has", posts.length, "posts");
+      assert(posts.length > 0, "expected at least one post for user " + variables.get("userId"));

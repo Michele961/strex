@@ -1,0 +1,30 @@
+name: "01 · Hello World"
+version: "1.0"
+
+# Tutorial 01 — Hello World
+#
+# The simplest possible collection: one GET request with one assertion.
+# Run it with:
+#
+#   strex run examples/tutorials/01-hello-world.yaml
+#
+# You should see:
+#   GET  Get a post  ✓
+#   1 requests · 1 passed · 0 failed
+#
+# What you learn here:
+#   - The required top-level fields: name, version, requests
+#   - The minimum fields a request needs: name, method, url
+#   - How to assert that the HTTP status code is what you expect
+#
+# JSONPlaceholder (https://jsonplaceholder.typicode.com) is a free, public REST
+# API designed for testing. No signup or authentication needed.
+
+requests:
+  - name: Get a post
+    method: GET
+    url: https://jsonplaceholder.typicode.com/posts/1
+    assertions:
+      # Assert the server returned HTTP 200 OK.
+      # If the status is anything else the request is marked as failed.
+      - status: 200

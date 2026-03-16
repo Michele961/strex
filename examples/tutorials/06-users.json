@@ -1,0 +1,5 @@
+[
+  { "userId": "1", "expectedEmail": "Sincere@april.biz" },
+  { "userId": "2", "expectedEmail": "Shanna@melissa.tv" },
+  { "userId": "3", "expectedEmail": "Nathan@yesenia.net" }
+]

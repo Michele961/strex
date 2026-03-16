@@ -1,0 +1,110 @@
+name: "02 · Assertions"
+version: "1.0"
+
+# Tutorial 02 — Assertions
+#
+# Strex supports three categories of declarative assertion, each demonstrated
+# below.  Run with:
+#
+#   strex run examples/tutorials/02-assertions.yaml
+#
+# What you learn here:
+#   - status      — assert the HTTP status code
+#   - jsonPath    — inspect the response body with JSONPath expressions
+#                     · exists: true/false   — field present / absent
+#                     · equals: "value"      — exact match (variable interpolation supported)
+#                     · contains: "substr"   — substring or array-element match
+#   - header      — inspect a response header
+#                     · exists: true/false
+#                     · equals: "value"
+#                     · contains: "substr"
+#
+# A request is marked as FAILED when any assertion does not hold.
+# All assertions still run even if an earlier one fails (full report).
+
+requests:
+  # ── Status assertions ───────────────────────────────────────────────────────
+  - name: Status equals 200
+    method: GET
+    url: https://jsonplaceholder.typicode.com/posts/1
+    assertions:
+      - status: 200
+
+  - name: Status equals 404
+    method: GET
+    # JSONPlaceholder returns 404 for paths that don't exist
+    url: https://jsonplaceholder.typicode.com/posts/99999999
+    assertions:
+      - status: 404
+
+  # ── jsonPath · exists ────────────────────────────────────────────────────────
+  - name: JSONPath exists true
+    method: GET
+    url: https://jsonplaceholder.typicode.com/posts/1
+    assertions:
+      - status: 200
+      # "$" is the root of the JSON document.
+      # "$.id" means the top-level field named "id".
+      - jsonPath: "$.id"
+        exists: true
+      - jsonPath: "$.title"
+        exists: true
+      # A field we know is NOT in the response; exists: false passes when absent.
+      - jsonPath: "$.nonExistentField"
+        exists: false
+
+  # ── jsonPath · equals ────────────────────────────────────────────────────────
+  - name: JSONPath equals
+    method: GET
+    url: https://jsonplaceholder.typicode.com/posts/1
+    assertions:
+      - status: 200
+      # JSONPlaceholder always returns id=1 for /posts/1.
+      # equals compares as strings — numbers are coerced automatically.
+      - jsonPath: "$.id"
+        equals: "1"
+      - jsonPath: "$.userId"
+        equals: "1"
+
+  # ── jsonPath · contains ──────────────────────────────────────────────────────
+  - name: JSONPath contains (string substring)
+    method: GET
+    url: https://jsonplaceholder.typicode.com/posts/1
+    assertions:
+      - status: 200
+      # "contains" on a string checks for a substring.
+      - jsonPath: "$.title"
+        contains: "sunt"
+
+  - name: JSONPath contains (array element)
+    method: GET
+    # /users/1/todos returns an array of todo objects
+    url: https://jsonplaceholder.typicode.com/users/1/todos
+    assertions:
+      - status: 200
+      # "contains" on an array checks whether the value appears in the array.
+      # "$[0].completed" is a boolean; the string "false" matches it.
+      - jsonPath: "$[0].userId"
+        equals: "1"
+
+  # ── header assertions ────────────────────────────────────────────────────────
+  - name: Header exists and contains
+    method: GET
+    url: https://jsonplaceholder.typicode.com/posts/1
+    assertions:
+      - status: 200
+      # Header names are case-insensitive.
+      - header: "content-type"
+        exists: true
+      # JSONPlaceholder returns "application/json; charset=utf-8"
+      - header: "content-type"
+        contains: "application/json"
+
+  - name: Header equals
+    method: GET
+    url: https://jsonplaceholder.typicode.com/posts/1
+    assertions:
+      - status: 200
+      # Exact match — value must match character-for-character.
+      - header: "content-type"
+        equals: "application/json; charset=utf-8"

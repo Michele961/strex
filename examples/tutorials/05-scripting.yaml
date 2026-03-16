@@ -1,0 +1,173 @@
+name: "05 · Scripting"
+version: "1.0"
+
+# Tutorial 05 — Scripting
+#
+# Run with:
+#
+#   strex run examples/tutorials/05-scripting.yaml
+#
+# What you learn here:
+#   The full JavaScript scripting API available in pre_script and post_script:
+#
+#   response (post_script only)
+#     .status          — HTTP status code (number)
+#     .statusText      — e.g. "OK", "Not Found"
+#     .headers         — object of lowercased header names → values
+#     .text()          — response body as a raw string
+#     .json()          — response body parsed as JSON (throws on invalid JSON)
+#     .timing.total    — end-to-end request time in milliseconds (number)
+#
+#   variables
+#     .get(key)        — returns the current value or undefined
+#     .set(key, value) — stores the value (numbers and booleans are coerced to string)
+#     .has(key)        — returns true if the key exists
+#     .keys()          — returns an array of all variable names
+#     .delete(key)     — removes the variable (won't be visible to later requests)
+#     .clear()         — removes ALL collection variables
+#
+#   env
+#     .get(key)        — reads from the collection's environment block (read-only)
+#
+#   Assertions
+#     assert(condition, message?)        — fails if condition is falsy
+#     assertEqual(actual, expected, msg?) — fails if actual !== expected
+#     assertNotEqual(a, b, msg?)         — fails if a === b
+#     assertContains(haystack, needle, msg?) — fails if needle not in haystack
+#     assertMatch(string, regex, msg?)   — fails if string doesn't match regex
+#
+#   console
+#     .log(...args)    — printed in verbose mode
+#     .warn(...args)   — printed with [WARN] prefix
+#     .error(...args)  — printed with [ERROR] prefix
+
+environment:
+  baseUrl: https://jsonplaceholder.typicode.com
+
+variables:
+  extractedId: null
+  extractedEmail: null
+
+requests:
+  # ── response object ──────────────────────────────────────────────────────────
+  - name: Inspect response object
+    method: GET
+    url: "{{baseUrl}}/users/1"
+    assertions:
+      - status: 200
+    post_script: |
+      // response.status is a number
+      console.log("status:", response.status);          // 200
+      console.log("statusText:", response.statusText);  // "OK"
+
+      // response.headers — all keys are lowercased
+      const ct = response.headers["content-type"];
+      console.log("content-type:", ct);
+
+      // response.json() — parses the body as JSON
+      const user = response.json();
+      console.log("user name:", user.name);
+
+      // response.text() — raw body string
+      const raw = response.text();
+      console.log("body starts with:", raw.slice(0, 20));
+
+      // response.timing.total — milliseconds
+      console.log("total ms:", response.timing.total);
+
+  # ── variables API ─────────────────────────────────────────────────────────
+  - name: Variables API
+    method: GET
+    url: "{{baseUrl}}/users/1"
+    assertions:
+      - status: 200
+    post_script: |
+      const user = response.json();
+
+      // .set — numbers and booleans are coerced to string automatically
+      variables.set("extractedId",    String(user.id));
+      variables.set("extractedEmail", user.email);
+
+      // .has — check before reading
+      if (variables.has("extractedId")) {
+        console.log("extractedId:", variables.get("extractedId"));
+      }
+
+      // .keys — enumerate all variable names
+      console.log("all variable keys:", variables.keys().join(", "));
+
+  # ── env API ───────────────────────────────────────────────────────────────
+  - name: env API
+    method: GET
+    url: "{{baseUrl}}/users/{{extractedId}}"
+    assertions:
+      - status: 200
+    post_script: |
+      // env.get reads from the collection's `environment` block.
+      const base = env.get("baseUrl");
+      console.log("baseUrl from env:", base);
+
+  # ── assert ────────────────────────────────────────────────────────────────
+  - name: assert and assertEqual
+    method: GET
+    url: "{{baseUrl}}/users/1"
+    assertions:
+      - status: 200
+    post_script: |
+      const user = response.json();
+
+      // assert(condition, message) — message is shown in the failure output
+      assert(user.id > 0, "user id must be positive");
+      assert(user.email.includes("@"), "email must contain @");
+
+      // assertEqual(actual, expected) — strict equality
+      assertEqual(typeof user.id, "number", "id should be a number");
+
+      // assertNotEqual
+      assertNotEqual(user.name, "", "name should not be empty");
+
+      // assertContains(haystack, needle)
+      assertContains(user.email, "@", "email should contain @");
+
+      // assertMatch(string, regex)
+      assertMatch(user.website, /\w+/, "website should contain word characters");
+
+  # ── console ───────────────────────────────────────────────────────────────
+  - name: console logging
+    method: GET
+    url: "{{baseUrl}}/posts/1"
+    assertions:
+      - status: 200
+    post_script: |
+      const post = response.json();
+
+      // console.log   → [LOG]   in output (verbose only)
+      console.log("post title:", post.title);
+
+      // console.warn  → [WARN]  in output
+      if (post.title.length > 50) {
+        console.warn("post title is very long:", post.title.length, "chars");
+      }
+
+      // console.error → [ERROR] in output
+      if (!post.body) {
+        console.error("post has no body");
+      }
+
+  # ── variables.delete and variables.clear ──────────────────────────────────
+  - name: delete and clear
+    method: GET
+    url: "{{baseUrl}}/posts/1"
+    assertions:
+      - status: 200
+    post_script: |
+      // .delete removes one variable — it won't be available to later requests
+      variables.delete("extractedEmail");
+      assert(!variables.has("extractedEmail"), "extractedEmail should be gone");
+
+      // .clear removes ALL variables — use with caution
+      variables.set("temp", "will be cleared");
+      variables.clear();
+      assert(!variables.has("temp"),          "temp should be cleared");
+      assert(!variables.has("extractedId"),   "extractedId should be cleared");
+      console.log("all variables cleared");

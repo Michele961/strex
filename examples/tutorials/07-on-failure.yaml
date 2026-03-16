@@ -1,0 +1,138 @@
+name: "07 · on_failure Control Flow"
+version: "1.0"
+
+# Tutorial 07 — on_failure Control Flow
+#
+# Run with:
+#
+#   strex run examples/tutorials/07-on-failure.yaml
+#
+# What you learn here:
+#   on_failure controls what happens to the REST of the collection when a
+#   request fails (any assertion fails OR a script throws).
+#
+#   Two modes:
+#
+#     on_failure: stop
+#       — Abort immediately. All subsequent requests are skipped.
+#         Use this when downstream requests make no sense without the previous
+#         one succeeding (e.g. you need an auth token to proceed).
+#
+#     on_failure:
+#       skip_to: "Step Name"
+#       — Skip requests until the named step, then resume from there.
+#         Use this to jump over a related block and continue with an
+#         independent section of the collection.
+#
+#   If on_failure is omitted (the default), a failure is logged and execution
+#   continues with the next request — the current behavior from tutorials 01-06.
+#
+#   Skipped requests appear as "-" in the console output and are not counted
+#   as failures in the summary.
+#
+# Scenario A (stop):
+#   "Login" fails intentionally → the two authenticated requests are skipped.
+#
+# Scenario B (skip_to):
+#   "Validate post format" fails → execution jumps past the update/delete
+#   block to the independent "Fetch comments" step and continues from there.
+
+environment:
+  baseUrl: https://jsonplaceholder.typicode.com
+
+variables:
+  postId: null
+
+requests:
+  # ════════════════════════════════════════════════════════════════════════════
+  # SCENARIO A — on_failure: stop
+  #
+  # "Fake login" asserts a 201 but the server returns 200, so it always fails.
+  # The two requests below it are skipped entirely.
+  # ════════════════════════════════════════════════════════════════════════════
+
+  - name: Fake login (intentional failure)
+    method: GET
+    url: "{{baseUrl}}/users/1"
+    # We assert 201 but the server returns 200 — this will fail.
+    assertions:
+      - status: 201
+    on_failure: stop
+    # Because on_failure is "stop", strex will skip everything that follows
+    # this request in Scenario A — both "Protected resource 1" and
+    # "Protected resource 2" will show as "-" (skipped).
+
+  - name: Protected resource 1
+    method: GET
+    url: "{{baseUrl}}/posts/1"
+    assertions:
+      - status: 200
+
+  - name: Protected resource 2
+    method: GET
+    url: "{{baseUrl}}/posts/2"
+    assertions:
+      - status: 200
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # SCENARIO B — on_failure: {skip_to: "..."}
+  #
+  # A preparation step fetches a post. Then "Validate post format" asserts
+  # something that fails, triggering a jump straight to "Fetch comments",
+  # skipping the "Update post" and "Delete post" steps in between.
+  # ════════════════════════════════════════════════════════════════════════════
+
+  - name: Fetch post for scenario B
+    method: GET
+    url: "{{baseUrl}}/posts/1"
+    assertions:
+      - status: 200
+    post_script: |
+      const post = response.json();
+      variables.set("postId", String(post.id));
+
+  - name: Validate post format
+    method: GET
+    url: "{{baseUrl}}/posts/{{postId}}"
+    # We assert that the title equals an impossible value — this will fail.
+    assertions:
+      - status: 200
+      - jsonPath: "$.title"
+        equals: "this title will never match"
+    # Because validation failed, skip the destructive update/delete block and
+    # jump directly to "Fetch comments" which is independent.
+    on_failure:
+      skip_to: "Fetch comments"
+
+  - name: Update post
+    method: PUT
+    url: "{{baseUrl}}/posts/{{postId}}"
+    headers:
+      Content-Type: application/json
+    body:
+      type: json
+      content:
+        id: "{{postId}}"
+        title: Updated
+        body: Updated body.
+        userId: 1
+    assertions:
+      - status: 200
+
+  - name: Delete post
+    method: DELETE
+    url: "{{baseUrl}}/posts/{{postId}}"
+    assertions:
+      - status: 200
+
+  # Execution resumes here after the skip_to jump.
+  - name: Fetch comments
+    method: GET
+    url: "{{baseUrl}}/posts/{{postId}}/comments"
+    assertions:
+      - status: 200
+      - jsonPath: "$[0].email"
+        exists: true
+    post_script: |
+      const comments = response.json();
+      console.log("fetched", comments.length, "comments — scenario B complete");
