@@ -88,7 +88,7 @@ fn truncate_body(body: &str) -> String {
         let boundary = (0..=BODY_LIMIT)
             .rev()
             .find(|&i| body.is_char_boundary(i))
-            .unwrap_or(0);
+            .expect("index 0 is always a char boundary");
         format!("{} [truncated]", &body[..boundary])
     }
 }
@@ -450,6 +450,7 @@ mod tests {
         let body = "x".repeat(20_000);
         let result = truncate_body(&body);
         assert!(result.ends_with(" [truncated]"));
-        assert!(result.len() < 20_000);
+        // Exact length: BODY_LIMIT bytes of content + 12 bytes for " [truncated]"
+        assert_eq!(result.len(), BODY_LIMIT + " [truncated]".len());
     }
 }
