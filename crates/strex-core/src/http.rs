@@ -39,6 +39,11 @@ pub struct HttpResponse {
     pub body: String,
     /// Per-request timing breakdown. `total_ms` is set by the runner after Phase 7.
     pub timing: RequestTiming,
+    /// Serialised outgoing request body, for display in the UI.
+    /// `None` when the request had no body.
+    pub request_body: Option<String>,
+    /// The fully-interpolated request URL (after template resolution), for display in the UI.
+    pub url: String,
 }
 
 /// Internal resolved request constructed by the runner for consumption by `send`.
@@ -56,6 +61,28 @@ pub(crate) enum ResolvedBody {
     Json(serde_json::Value),
     Text(String),
     Form(HashMap<String, String>),
+}
+
+/// Convert a `ResolvedBody` to a display string for the UI.
+///
+/// Best-effort: JSON serialisation failure yields an empty string rather than an error.
+fn display_body(body: &ResolvedBody) -> String {
+    match body {
+        ResolvedBody::Text(s) => s.clone(),
+        ResolvedBody::Json(v) => {
+            // display_body is best-effort; serialisation failure yields an empty string
+            serde_json::to_string_pretty(v).unwrap_or_else(|_| String::new())
+        }
+        ResolvedBody::Form(m) => {
+            let mut pairs: Vec<(&String, &String)> = m.iter().collect();
+            pairs.sort_by_key(|(k, _)| k.as_str());
+            let mut serializer = url::form_urlencoded::Serializer::new(String::new());
+            for (k, v) in pairs {
+                serializer.append_pair(k, v);
+            }
+            serializer.finish()
+        }
+    }
 }
 
 /// Send an HTTP request and return the captured response.
@@ -84,7 +111,6 @@ pub(crate) async fn send(request: &ResolvedRequest) -> Result<HttpResponse, Requ
 
     let mut req = client.request(method, url);
 
-    // Apply user-provided headers
     let mut header_map = HeaderMap::new();
     for (name, value) in &request.headers {
         if let (Ok(n), Ok(v)) = (
@@ -96,7 +122,8 @@ pub(crate) async fn send(request: &ResolvedRequest) -> Result<HttpResponse, Requ
     }
     req = req.headers(header_map);
 
-    // Apply body (reqwest sets Content-Type automatically for json and form)
+    let request_body: Option<String> = request.body.as_ref().map(display_body);
+
     req = match &request.body {
         None => req,
         Some(ResolvedBody::Json(v)) => req.json(v),
@@ -147,6 +174,8 @@ pub(crate) async fn send(request: &ResolvedRequest) -> Result<HttpResponse, Requ
         headers,
         body,
         timing,
+        request_body,
+        url: url.clone(),
     })
 }
 
@@ -222,6 +251,39 @@ mod tests {
             body: None,
             timeout_ms: 200,
         }
+    }
+
+    #[test]
+    fn display_body_text_returns_raw_string() {
+        let body = ResolvedBody::Text("hello world".to_string());
+        assert_eq!(display_body(&body), "hello world");
+    }
+
+    #[test]
+    fn display_body_json_returns_pretty_printed() {
+        let body = ResolvedBody::Json(serde_json::json!({"b": 2, "a": 1}));
+        let result = display_body(&body);
+        assert!(result.contains('"'));
+        assert!(result.contains('\n'));
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["a"], 1);
+        assert_eq!(parsed["b"], 2);
+    }
+
+    #[test]
+    fn display_body_form_is_sorted_and_url_encoded() {
+        let mut form = HashMap::new();
+        form.insert("z_key".to_string(), "last".to_string());
+        form.insert("a_key".to_string(), "first".to_string());
+        form.insert("m key".to_string(), "mid val".to_string());
+        let body = ResolvedBody::Form(form);
+        let result = display_body(&body);
+        let pos_a = result.find("a_key").unwrap();
+        let pos_m = result.find("m+key").unwrap();
+        let pos_z = result.find("z_key").unwrap();
+        assert!(pos_a < pos_m, "a_key should come before m+key");
+        assert!(pos_m < pos_z, "m+key should come before z_key");
+        assert!(result.contains("mid+val") || result.contains("mid%20val"));
     }
 
     #[tokio::test]

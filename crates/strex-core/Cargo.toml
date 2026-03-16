@@ -28,6 +28,9 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 # JSON value manipulation
 serde_json = "1"
 
+# url: form_urlencoded::Serializer used in display_body to render form request bodies for UI display
+url = "2"
+
 # CSV parsing for data-driven testing (SP4); StringRecord-based, no serde features needed
 csv = "1"
 
