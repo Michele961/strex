@@ -63,6 +63,36 @@ fn format_failure(failure: &AssertionFailure) -> String {
     }
 }
 
+/// Maximum response body bytes to forward to the browser.
+const BODY_LIMIT: usize = 10_240;
+
+/// Fields extracted from a [`RequestOutcome`] for use in [`WsEvent::RequestCompleted`].
+///
+/// `(passed, status, failures, error, response_body, response_headers)`
+type OutcomeFields = (
+    bool,
+    Option<u16>,
+    Vec<String>,
+    Option<String>,
+    Option<String>,
+    Option<std::collections::HashMap<String, String>>,
+);
+
+/// Truncate `body` to at most [`BODY_LIMIT`] bytes, respecting UTF-8 character boundaries.
+///
+/// Appends `" [truncated]"` if the body was cut.
+fn truncate_body(body: &str) -> String {
+    if body.len() <= BODY_LIMIT {
+        body.to_string()
+    } else {
+        let boundary = (0..=BODY_LIMIT)
+            .rev()
+            .find(|&i| body.is_char_boundary(i))
+            .unwrap_or(0);
+        format!("{} [truncated]", &body[..boundary])
+    }
+}
+
 /// Send a [`WsEvent`] serialized as JSON text over the WebSocket.
 ///
 /// Returns `Ok(())` on success; swallows send errors silently (client may have disconnected).
@@ -152,7 +182,7 @@ async fn run_collection_and_stream(
         let mut total_duration_ms: u64 = 0;
         for iter in &result.iterations {
             for req_result in &iter.collection_result.request_results {
-                let (passed, status, failures, error) =
+                let (passed, status, failures, error, response_body, response_headers) =
                     outcome_fields(&req_result.outcome, &req_result.response);
 
                 total_duration_ms += req_result.duration_ms;
@@ -173,8 +203,8 @@ async fn run_collection_and_stream(
                         duration_ms: req_result.duration_ms,
                         failures,
                         error,
-                        response_body: None,
-                        response_headers: None,
+                        response_body,
+                        response_headers,
                     },
                 )
                 .await;
@@ -218,7 +248,7 @@ async fn run_collection_and_stream(
         let mut total_duration_ms: u64 = 0;
 
         for req_result in &col_result.request_results {
-            let (passed, status, failures, error) =
+            let (passed, status, failures, error, response_body, response_headers) =
                 outcome_fields(&req_result.outcome, &req_result.response);
 
             if passed {
@@ -244,8 +274,8 @@ async fn run_collection_and_stream(
                     duration_ms: req_result.duration_ms,
                     failures,
                     error,
-                    response_body: None,
-                    response_headers: None,
+                    response_body,
+                    response_headers,
                 },
             )
             .await;
@@ -278,19 +308,25 @@ async fn run_collection_and_stream(
 ///
 /// `response` is `None` when a stopping error occurred before the HTTP phase.
 ///
-/// Returns `(passed, status, failures, error)`.
-fn outcome_fields(
-    outcome: &RequestOutcome,
-    response: &Option<HttpResponse>,
-) -> (bool, Option<u16>, Vec<String>, Option<String>) {
+/// Returns an [`OutcomeFields`] tuple: `(passed, status, failures, error, response_body, response_headers)`.
+fn outcome_fields(outcome: &RequestOutcome, response: &Option<HttpResponse>) -> OutcomeFields {
     let status = response.as_ref().map(|r| r.status);
+    let response_body = response.as_ref().map(|r| truncate_body(&r.body));
+    let response_headers = response.as_ref().map(|r| r.headers.clone());
     match outcome {
-        RequestOutcome::Passed => (true, status, vec![], None),
+        RequestOutcome::Passed => (true, status, vec![], None, response_body, response_headers),
         RequestOutcome::AssertionsFailed(failures) => {
             let msgs = failures.iter().map(format_failure).collect();
-            (false, status, msgs, None)
+            (false, status, msgs, None, response_body, response_headers)
         }
-        RequestOutcome::Error(e) => (false, status, vec![], Some(e.to_string())),
+        RequestOutcome::Error(e) => (
+            false,
+            status,
+            vec![],
+            Some(e.to_string()),
+            response_body,
+            response_headers,
+        ),
     }
 }
 
@@ -379,11 +415,14 @@ mod tests {
 
     #[test]
     fn outcome_fields_passed() {
-        let (passed, status, failures, error) = outcome_fields(&RequestOutcome::Passed, &None);
+        let (passed, status, failures, error, body, headers) =
+            outcome_fields(&RequestOutcome::Passed, &None);
         assert!(passed);
         assert!(status.is_none());
         assert!(failures.is_empty());
         assert!(error.is_none());
+        assert!(body.is_none());
+        assert!(headers.is_none());
     }
 
     #[test]
@@ -393,10 +432,24 @@ mod tests {
             expected: "200".into(),
             actual: "500".into(),
         }];
-        let (passed, _status, failures, error) =
+        let (passed, _status, failures, error, _body, _headers) =
             outcome_fields(&RequestOutcome::AssertionsFailed(failures_in), &None);
         assert!(!passed);
         assert_eq!(failures, vec!["status expected 200, got 500"]);
         assert!(error.is_none());
+    }
+
+    #[test]
+    fn truncate_body_short_body_unchanged() {
+        let body = "hello";
+        assert_eq!(truncate_body(body), "hello");
+    }
+
+    #[test]
+    fn truncate_body_long_body_is_truncated() {
+        let body = "x".repeat(20_000);
+        let result = truncate_body(&body);
+        assert!(result.ends_with(" [truncated]"));
+        assert!(result.len() < 20_000);
     }
 }
