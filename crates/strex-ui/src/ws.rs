@@ -34,6 +34,12 @@ pub struct RunConfig {
     /// `None` or `Some(1)` means run once (default behaviour).
     #[serde(default)]
     pub repeat_iterations: Option<usize>,
+    /// Milliseconds to sleep before each request after the first one.
+    #[serde(default)]
+    pub delay_between_requests_ms: u64,
+    /// Milliseconds to sleep before each iteration after the first one.
+    #[serde(default)]
+    pub delay_between_iterations_ms: u64,
 }
 
 fn default_concurrency() -> usize {
@@ -195,6 +201,8 @@ async fn run_collection_and_stream(
         let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(config.concurrency));
         let fail_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let fail_fast = config.fail_fast;
+        let delay_between_iterations_ms = config.delay_between_iterations_ms;
+        let delay_between_requests_ms = config.delay_between_requests_ms;
         let http_client = std::sync::Arc::new(
             reqwest::Client::builder()
                 .build()
@@ -207,6 +215,10 @@ async fn run_collection_and_stream(
             for (idx, row) in rows.into_iter().enumerate() {
                 if fail_fast && fail_flag.load(std::sync::atomic::Ordering::Acquire) {
                     break;
+                }
+
+                if idx > 0 && delay_between_iterations_ms > 0 {
+                    tokio::time::sleep(std::time::Duration::from_millis(delay_between_iterations_ms)).await;
                 }
 
                 let col = std::sync::Arc::clone(&arc_col);
@@ -232,7 +244,7 @@ async fn run_collection_and_stream(
 
                     let _ = tx.send((iteration, row_clone.clone(), None));
 
-                    let opts = RunnerOpts { http_client: client, ..RunnerOpts::default() };
+                    let opts = RunnerOpts { http_client: client, delay_between_requests_ms, ..RunnerOpts::default() };
                     let col_result = execute_collection_streaming(
                         &col,
                         ctx,
@@ -341,6 +353,8 @@ async fn run_collection_and_stream(
         let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(config.concurrency));
         let fail_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let fail_fast = config.fail_fast;
+        let delay_between_iterations_ms = config.delay_between_iterations_ms;
+        let delay_between_requests_ms = config.delay_between_requests_ms;
         let http_client = std::sync::Arc::new(
             reqwest::Client::builder()
                 .build()
@@ -353,6 +367,10 @@ async fn run_collection_and_stream(
             for iteration in 1..=repeats {
                 if fail_fast && fail_flag.load(std::sync::atomic::Ordering::Acquire) {
                     break;
+                }
+
+                if iteration > 1 && delay_between_iterations_ms > 0 {
+                    tokio::time::sleep(std::time::Duration::from_millis(delay_between_iterations_ms)).await;
                 }
 
                 let col = std::sync::Arc::clone(&arc_col);
@@ -376,7 +394,7 @@ async fn run_collection_and_stream(
 
                     let _ = tx.send((iteration, None));
 
-                    let opts = RunnerOpts { http_client: client, ..RunnerOpts::default() };
+                    let opts = RunnerOpts { http_client: client, delay_between_requests_ms, ..RunnerOpts::default() };
                     let col_result = execute_collection_streaming(
                         &col,
                         ctx,
