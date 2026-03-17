@@ -34,7 +34,11 @@ pub async fn execute(args: RunArgs) -> anyhow::Result<i32> {
         let opts = DataRunOpts {
             concurrency: args.concurrency,
             fail_fast: args.fail_fast,
-            runner_opts: RunnerOpts::default(),
+            delay_between_iterations_ms: args.delay_iterations,
+            runner_opts: RunnerOpts {
+                delay_between_requests_ms: args.delay_requests,
+                ..RunnerOpts::default()
+            },
         };
         // `run_collection_with_data` takes ownership of collection, so clone first.
         let data_result = run_collection_with_data(collection.clone(), rows, opts).await?;
@@ -44,7 +48,11 @@ pub async fn execute(args: RunArgs) -> anyhow::Result<i32> {
         }
     } else {
         let ctx = ExecutionContext::new(&collection);
-        let col_result = strex_core::execute_collection(&collection, ctx).await;
+        let opts = RunnerOpts {
+            delay_between_requests_ms: args.delay_requests,
+            ..RunnerOpts::default()
+        };
+        let col_result = strex_core::execute_collection_with_opts(&collection, ctx, opts).await;
         RunResult {
             collection,
             outcome: RunOutcome::Single(col_result),
@@ -113,6 +121,8 @@ requests:
             fail_fast: false,
             format,
             output,
+            delay_requests: 0,
+            delay_iterations: 0,
         }
     }
 

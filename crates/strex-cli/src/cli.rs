@@ -41,6 +41,12 @@ pub struct RunArgs {
     /// Write output to this file instead of stdout
     #[arg(long)]
     pub output: Option<PathBuf>,
+    /// Milliseconds to sleep before each request after the first one
+    #[arg(long, default_value = "0")]
+    pub delay_requests: u64,
+    /// Milliseconds to sleep before each iteration after the first one
+    #[arg(long, default_value = "0")]
+    pub delay_iterations: u64,
 }
 
 /// Arguments for the `validate` subcommand.
