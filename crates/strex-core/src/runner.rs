@@ -101,6 +101,9 @@ pub struct RunnerOpts {
     /// create one client per collection run and pass it here. `RunnerOpts::default()`
     /// builds a fresh client automatically.
     pub http_client: std::sync::Arc<reqwest::Client>,
+    /// Milliseconds to sleep before each request after the first one in a collection run.
+    /// Default: `0` (no delay).
+    pub delay_between_requests_ms: u64,
 }
 
 impl Default for RunnerOpts {
@@ -114,6 +117,7 @@ impl Default for RunnerOpts {
                     .build()
                     .expect("default reqwest::Client build should never fail"),
             ),
+            delay_between_requests_ms: 0,
         }
     }
 }
@@ -252,6 +256,10 @@ where
                 continue;
             }
             skip_until = None;
+        }
+
+        if i > 0 && opts.delay_between_requests_ms > 0 {
+            tokio::time::sleep(Duration::from_millis(opts.delay_between_requests_ms)).await;
         }
 
         let result = execute_request(request, &mut context, &opts).await;
