@@ -10,6 +10,8 @@ export interface RunConfig {
   fail_fast: boolean
   max_iterations?: number
   repeat_iterations?: number
+  delay_between_requests_ms?: number
+  delay_between_iterations_ms?: number
 }
 
 export type WsEvent =

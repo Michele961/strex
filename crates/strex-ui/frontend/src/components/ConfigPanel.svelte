@@ -15,6 +15,8 @@
   let concurrency = $state(1)
   let failFast = $state(false)
   let iterations = $state<number | null>(null)
+  let delayRequests = $state(0)
+  let delayIterations = $state(0)
   let activeTab = $state<'functional' | 'performance'>('functional')
   let requestSequence = $state<RequestSequenceItem[]>([])
   let sequenceLoading = $state(false)
@@ -89,6 +91,8 @@
   function handleRun() {
     if (!selectedCollection) return
     const iterNum = iterations != null ? Number(iterations) : null
+    const reqDelay = Number(delayRequests)
+    const iterDelay = Number(delayIterations)
     onRun({
       collection: selectedCollection,
       data: dataFile || undefined,
@@ -96,6 +100,8 @@
       fail_fast: failFast,
       max_iterations: dataFile.trim() ? (iterNum ?? undefined) : undefined,
       repeat_iterations: !dataFile.trim() ? (iterNum ?? undefined) : undefined,
+      ...(reqDelay > 0 ? { delay_between_requests_ms: reqDelay } : {}),
+      ...(iterDelay > 0 ? { delay_between_iterations_ms: iterDelay } : {}),
     })
   }
 </script>
@@ -205,6 +211,16 @@
       <label class="field">
         <span>Concurrency</span>
         <input type="number" min="1" max="50" bind:value={concurrency} />
+      </label>
+
+      <label class="field">
+        <span>Delay between requests <em>(ms)</em></span>
+        <input type="number" min="0" bind:value={delayRequests} />
+      </label>
+
+      <label class="field">
+        <span>Delay between iterations <em>(ms)</em></span>
+        <input type="number" min="0" bind:value={delayIterations} />
       </label>
 
       <label class="field checkbox">
