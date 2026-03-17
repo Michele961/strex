@@ -22,6 +22,9 @@ pub struct DataRunOpts {
     /// When `true`, no new iterations are launched after any iteration fails.
     /// In-flight iterations always run to completion.
     pub fail_fast: bool,
+    /// Milliseconds to sleep before each iteration after the first one.
+    /// Default: `0` (no delay).
+    pub delay_between_iterations_ms: u64,
     /// Options forwarded to each `execute_collection_with_opts` call.
     pub runner_opts: RunnerOpts,
 }
@@ -31,6 +34,7 @@ impl Default for DataRunOpts {
         Self {
             concurrency: 1,
             fail_fast: false,
+            delay_between_iterations_ms: 0,
             runner_opts: RunnerOpts::default(),
         }
     }
@@ -170,6 +174,11 @@ pub async fn run_collection_with_data(
         // Check before blocking on semaphore acquisition.
         if fail_fast && fail_flag.load(Ordering::Acquire) {
             break;
+        }
+
+        if idx > 0 && opts.delay_between_iterations_ms > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(opts.delay_between_iterations_ms))
+                .await;
         }
 
         let col = Arc::clone(&arc_col);
