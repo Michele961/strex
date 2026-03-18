@@ -45,7 +45,13 @@ pub(crate) fn save_run(
 
     let stem: String = collection_name
         .chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
 
     let filename = format!("{timestamp}-{stem}.json");
@@ -74,12 +80,7 @@ pub(crate) fn list_runs() -> Vec<RunSummary> {
 
     let mut summaries: Vec<(std::time::SystemTime, RunSummary)> = entries
         .filter_map(|e| e.ok())
-        .filter(|e| {
-            e.path()
-                .extension()
-                .map(|x| x == "json")
-                .unwrap_or(false)
-        })
+        .filter(|e| e.path().extension().map(|x| x == "json").unwrap_or(false))
         .filter_map(|e| {
             let path = e.path();
             let content = std::fs::read_to_string(&path).ok()?;

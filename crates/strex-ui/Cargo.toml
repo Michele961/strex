@@ -21,6 +21,8 @@ tower-http = { version = "0.5", features = ["cors"] }
 mime_guess = "2"
 # Collection runner — execute collections and stream results
 strex-core = { path = "../strex-core" }
+# Import conversion — generates Strex YAML from curl and OpenAPI sources
+strex-import = { path = "../strex-import" }
 # HTTP client — shared per-run client for connection pooling across concurrent iterations
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 # Application-level error handling
@@ -31,3 +33,5 @@ chrono = "0.4"
 [dev-dependencies]
 # Temporary directories for integration tests
 tempfile = "3"
+# Test utilities for calling Axum routers without binding a port
+tower = { version = "0.4", features = ["util"] }

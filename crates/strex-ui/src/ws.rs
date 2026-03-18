@@ -8,8 +8,7 @@ use std::path::Path;
 
 use strex_core::{
     execute_collection_streaming, parse_collection, parse_csv, parse_json, AssertionFailure,
-    AssertionType, ExecutionContext, LogLevel, RequestOutcome,
-    RequestResult, RunnerOpts,
+    AssertionType, ExecutionContext, LogLevel, RequestOutcome, RequestResult, RunnerOpts,
 };
 
 use crate::events::{ConsoleLog, WsEvent};
@@ -193,7 +192,11 @@ async fn run_collection_and_stream(
         let total = rows.len() * collection.requests.len();
         send_event(socket, WsEvent::RunStarted { total }).await;
 
-        type DataChannelPayload = (usize, std::collections::HashMap<String, String>, Option<(String, String, u64, OutcomeFields)>);
+        type DataChannelPayload = (
+            usize,
+            std::collections::HashMap<String, String>,
+            Option<(String, String, u64, OutcomeFields)>,
+        );
 
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<DataChannelPayload>();
 
@@ -218,7 +221,10 @@ async fn run_collection_and_stream(
                 }
 
                 if idx > 0 && delay_between_iterations_ms > 0 {
-                    tokio::time::sleep(std::time::Duration::from_millis(delay_between_iterations_ms)).await;
+                    tokio::time::sleep(std::time::Duration::from_millis(
+                        delay_between_iterations_ms,
+                    ))
+                    .await;
                 }
 
                 let col = std::sync::Arc::clone(&arc_col);
@@ -244,28 +250,31 @@ async fn run_collection_and_stream(
 
                     let _ = tx.send((iteration, row_clone.clone(), None));
 
-                    let opts = RunnerOpts { http_client: client, delay_between_requests_ms, ..RunnerOpts::default() };
-                    let col_result = execute_collection_streaming(
-                        &col,
-                        ctx,
-                        opts,
-                        |req_result| {
-                            let tx = tx.clone();
-                            let row_for_send = row_clone.clone();
-                            let name = req_result.name.clone();
-                            let method = col
-                                .requests
-                                .iter()
-                                .find(|r| r.name == name)
-                                .map(|r| r.method.clone())
-                                .unwrap_or_default();
-                            let duration_ms = req_result.duration_ms;
-                            let fields = outcome_fields(req_result);
-                            async move {
-                                let _ = tx.send((iteration, row_for_send, Some((name, method, duration_ms, fields))));
-                            }
-                        },
-                    )
+                    let opts = RunnerOpts {
+                        http_client: client,
+                        delay_between_requests_ms,
+                        ..RunnerOpts::default()
+                    };
+                    let col_result = execute_collection_streaming(&col, ctx, opts, |req_result| {
+                        let tx = tx.clone();
+                        let row_for_send = row_clone.clone();
+                        let name = req_result.name.clone();
+                        let method = col
+                            .requests
+                            .iter()
+                            .find(|r| r.name == name)
+                            .map(|r| r.method.clone())
+                            .unwrap_or_default();
+                        let duration_ms = req_result.duration_ms;
+                        let fields = outcome_fields(req_result);
+                        async move {
+                            let _ = tx.send((
+                                iteration,
+                                row_for_send,
+                                Some((name, method, duration_ms, fields)),
+                            ));
+                        }
+                    })
                     .await;
 
                     if fail_fast && !col_result.passed() {
@@ -288,7 +297,18 @@ async fn run_collection_and_stream(
                     send_event(socket, WsEvent::IterationStarted { iteration, row }).await;
                 }
                 Some((name, method, duration_ms, fields)) => {
-                    let (passed, status, failures, error, response_body, response_headers, request_body, url, logs, passed_assertions) = fields;
+                    let (
+                        passed,
+                        status,
+                        failures,
+                        error,
+                        response_body,
+                        response_headers,
+                        request_body,
+                        url,
+                        logs,
+                        passed_assertions,
+                    ) = fields;
                     if passed {
                         passed_count += 1;
                     } else if error.as_deref() == Some("skipped") {
@@ -370,7 +390,10 @@ async fn run_collection_and_stream(
                 }
 
                 if iteration > 1 && delay_between_iterations_ms > 0 {
-                    tokio::time::sleep(std::time::Duration::from_millis(delay_between_iterations_ms)).await;
+                    tokio::time::sleep(std::time::Duration::from_millis(
+                        delay_between_iterations_ms,
+                    ))
+                    .await;
                 }
 
                 let col = std::sync::Arc::clone(&arc_col);
@@ -394,27 +417,26 @@ async fn run_collection_and_stream(
 
                     let _ = tx.send((iteration, None));
 
-                    let opts = RunnerOpts { http_client: client, delay_between_requests_ms, ..RunnerOpts::default() };
-                    let col_result = execute_collection_streaming(
-                        &col,
-                        ctx,
-                        opts,
-                        |req_result| {
-                            let tx = tx.clone();
-                            let name = req_result.name.clone();
-                            let method = col
-                                .requests
-                                .iter()
-                                .find(|r| r.name == name)
-                                .map(|r| r.method.clone())
-                                .unwrap_or_default();
-                            let duration_ms = req_result.duration_ms;
-                            let fields = outcome_fields(req_result);
-                            async move {
-                                let _ = tx.send((iteration, Some((name, method, duration_ms, fields))));
-                            }
-                        },
-                    )
+                    let opts = RunnerOpts {
+                        http_client: client,
+                        delay_between_requests_ms,
+                        ..RunnerOpts::default()
+                    };
+                    let col_result = execute_collection_streaming(&col, ctx, opts, |req_result| {
+                        let tx = tx.clone();
+                        let name = req_result.name.clone();
+                        let method = col
+                            .requests
+                            .iter()
+                            .find(|r| r.name == name)
+                            .map(|r| r.method.clone())
+                            .unwrap_or_default();
+                        let duration_ms = req_result.duration_ms;
+                        let fields = outcome_fields(req_result);
+                        async move {
+                            let _ = tx.send((iteration, Some((name, method, duration_ms, fields))));
+                        }
+                    })
                     .await;
 
                     if fail_fast && !col_result.passed() {
@@ -446,7 +468,18 @@ async fn run_collection_and_stream(
                     }
                 }
                 Some((name, method, duration_ms, fields)) => {
-                    let (passed, status, failures, error, response_body, response_headers, request_body, url, logs, passed_assertions) = fields;
+                    let (
+                        passed,
+                        status,
+                        failures,
+                        error,
+                        response_body,
+                        response_headers,
+                        request_body,
+                        url,
+                        logs,
+                        passed_assertions,
+                    ) = fields;
                     if passed {
                         passed_count += 1;
                     } else if error.as_deref() == Some("skipped") {
@@ -517,10 +550,7 @@ fn outcome_fields(req_result: &RequestResult) -> OutcomeFields {
     let request_body = response
         .as_ref()
         .and_then(|r| r.request_body.as_deref().map(truncate_body));
-    let url = response
-        .as_ref()
-        .map(|r| r.url.clone())
-        .unwrap_or_default();
+    let url = response.as_ref().map(|r| r.url.clone()).unwrap_or_default();
     let console_logs: Vec<ConsoleLog> = logs
         .into_iter()
         .map(|e| ConsoleLog {
@@ -735,8 +765,18 @@ mod tests {
             logs: vec![],
             passed_assertions: vec![],
         };
-        let (passed, _status, failures, error, _body, _headers, _request_body, _url, _logs, _passed) =
-            outcome_fields(&req_result);
+        let (
+            passed,
+            _status,
+            failures,
+            error,
+            _body,
+            _headers,
+            _request_body,
+            _url,
+            _logs,
+            _passed,
+        ) = outcome_fields(&req_result);
         assert!(!passed);
         assert_eq!(failures, vec!["status expected 200, got 500"]);
         assert!(error.is_none());

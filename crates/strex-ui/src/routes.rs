@@ -70,11 +70,9 @@ pub async fn data_preview(Query(params): Query<DataPreviewParams>) -> impl IntoR
     };
 
     let rows = if path.ends_with(".csv") {
-        strex_core::parse_csv(&content)
-            .map_err(|e| format!("CSV parse error: {e}"))
+        strex_core::parse_csv(&content).map_err(|e| format!("CSV parse error: {e}"))
     } else if path.ends_with(".json") {
-        strex_core::parse_json(&content)
-            .map_err(|e| format!("JSON parse error: {e}"))
+        strex_core::parse_json(&content).map_err(|e| format!("JSON parse error: {e}"))
     } else {
         Err(format!(
             "Unsupported file extension (expected .csv or .json): {path}"
