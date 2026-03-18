@@ -138,7 +138,7 @@ fn content_type_from_request_body(operation: &Value) -> Option<String> {
         .map(String::from)
 }
 
-fn collect_operations(root: &Value, _base_url: &str, mode: &ImportMode) -> Vec<RequestEntry> {
+fn collect_operations(root: &Value, mode: &ImportMode) -> Vec<RequestEntry> {
     const HTTP_METHODS: &[&str] = &["get", "post", "put", "patch", "delete", "head", "options"];
 
     let Some(paths) = root.get("paths").and_then(|p| p.as_mapping()) else {
@@ -252,7 +252,7 @@ pub(crate) fn convert(spec: &str, mode: ImportMode) -> Result<String, ImportErro
         }
     };
 
-    let entries = collect_operations(&root, &base, &mode);
+    let entries = collect_operations(&root, &mode);
     Ok(render_yaml(&base, &entries, needs_comment))
 }
 
