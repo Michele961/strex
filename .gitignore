@@ -7,6 +7,9 @@ target/
 # Frontend build dependencies
 crates/strex-ui/frontend/node_modules/
 
+# Brainstorming session files (visual companion)
+/.superpowers/
+
 # IDE
 .idea/
 .vscode/
