@@ -1,0 +1,14 @@
+[package]
+name = "strex-import"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Typed error definitions — required by CLAUDE.md for library crates
+thiserror = "1"
+# YAML/JSON parsing for OpenAPI specs and YAML output generation
+serde_yaml = "0.9"
+# JSON parsing for curl body scrubbing
+serde_json = "1"
+# Serde derive macros
+serde = { version = "1", features = ["derive"] }
