@@ -1,5 +1,6 @@
 <script lang="ts">
   import { fetchCollections, fetchCollectionRequests, fetchDataPreview } from '../lib/api'
+  import ImportModal from './ImportModal.svelte'
   import type { RunConfig, RequestSequenceItem } from '../lib/types'
 
   interface Props {
@@ -23,6 +24,7 @@
   let dataPreview = $state<Record<string, string>[]>([])
   let dataPreviewError = $state<string | null>(null)
   let dataPreviewLoading = $state(false)
+  let showImportModal = $state(false)
 
   const methodColors: Record<string, string> = {
     GET: '#61affe',
@@ -103,6 +105,16 @@
       ...(reqDelay > 0 ? { delay_between_requests_ms: reqDelay } : {}),
       ...(iterDelay > 0 ? { delay_between_iterations_ms: iterDelay } : {}),
     })
+  }
+
+  function handleImportSaved(savedFilename: string) {
+    showImportModal = false
+    fetchCollections()
+      .then((files) => {
+        collections = files
+        selectedCollection = savedFilename
+      })
+      .catch((e: unknown) => console.error('Failed to refresh collections:', e))
   }
 </script>
 
@@ -235,6 +247,21 @@
       >
         {running ? 'Running…' : 'Run'}
       </button>
+
+      <button
+        class="import-button"
+        onclick={() => (showImportModal = true)}
+        disabled={running}
+      >
+        + Import
+      </button>
+
+      {#if showImportModal}
+        <ImportModal
+          onSaved={handleImportSaved}
+          onClose={() => (showImportModal = false)}
+        />
+      {/if}
     </div>
   {/if}
 </aside>
@@ -461,6 +488,28 @@
 
   .preview-table tr:nth-child(even) td {
     background: #16162a;
+  }
+
+  .import-button {
+    margin-top: 4px;
+    padding: 8px 12px;
+    background: transparent;
+    color: #aaa;
+    border: 1px dashed #444;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: border-color 0.15s, color 0.15s;
+  }
+
+  .import-button:hover:not(:disabled) {
+    border-color: #ff6b35;
+    color: #ff6b35;
+  }
+
+  .import-button:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
   }
 </style>
 

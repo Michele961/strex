@@ -107,7 +107,7 @@
           <span>Paste your curl command</span>
           <textarea
             class="code-input"
-            placeholder="curl -X POST https://api.example.com/users -H &quot;Authorization: Bearer ...&quot; -d '{...}'"
+            placeholder={"curl -X POST https://api.example.com/users -H 'Authorization: Bearer ...' -d '{...}'"}
             bind:value={input}
             rows={5}
           ></textarea>
