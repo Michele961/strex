@@ -47,9 +47,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn from_curl_stub_returns_error() {
-        // Stubs return errors until implementations land in curl.rs / openapi.rs
-        assert!(from_curl("curl https://example.com", ImportMode::Scaffold).is_err());
+    fn from_curl_basic() {
+        let result = from_curl("curl https://example.com", ImportMode::Scaffold);
+        assert!(result.is_ok());
+        let yaml = result.unwrap();
+        assert!(yaml.contains("GET"));
+        assert!(yaml.contains("https://example.com"));
     }
 
     #[test]
