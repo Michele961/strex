@@ -210,6 +210,10 @@ fn request_name(method: &str, url: &str) -> String {
 
 // ── YAML output ───────────────────────────────────────────────────────────────
 
+/// Parse a curl command string and return a Strex YAML collection string.
+///
+/// # Errors
+/// Returns [`ImportError::CurlParse`] if the input does not start with `curl` or contains no URL.
 pub(crate) fn convert(input: &str, mode: ImportMode) -> Result<String, ImportError> {
     let tokens = tokenize(input);
     if tokens.is_empty() || tokens[0].to_lowercase() != "curl" {
