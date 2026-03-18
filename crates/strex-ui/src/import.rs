@@ -57,56 +57,76 @@ pub async fn generate(
 ) -> impl IntoResponse {
     let mode: strex_import::ImportMode = body.mode.into();
 
-    let result = match body.source {
-        ImportSource::Curl => strex_import::from_curl(&body.input, mode),
+    match body.source {
+        ImportSource::Curl => match strex_import::from_curl(&body.input, mode) {
+            Ok(yaml) => (StatusCode::OK, Json(serde_json::json!({ "yaml": yaml }))).into_response(),
+            Err(e) => (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": e.to_string() })),
+            )
+                .into_response(),
+        },
         ImportSource::Openapi => {
-            // Detect URL vs file path
-            let spec = if body.input.starts_with("http://") || body.input.starts_with("https://") {
+            // Step 1: fetch/read the spec — I/O failure → 500
+            let spec_result = if body.input.starts_with("http://")
+                || body.input.starts_with("https://")
+            {
                 fetch_url(&state.http_client, &body.input).await
             } else {
-                std::fs::read_to_string(&body.input)
-                    .map_err(|e| strex_import::ImportError::OpenApiParse(e.to_string()))
+                std::fs::read_to_string(&body.input).map_err(|e| FetchOrIoError::Io(e.to_string()))
             };
-            spec.and_then(|s| strex_import::from_openapi(&s, mode))
-        }
-    };
 
-    match result {
-        Ok(yaml) => (StatusCode::OK, Json(serde_json::json!({ "yaml": yaml }))).into_response(),
-        // FetchTimeout is a struct variant: { url: String }
-        Err(strex_import::ImportError::FetchTimeout { .. }) => (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": "Request timed out fetching the spec URL" })),
-        )
-            .into_response(),
-        Err(e) => (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        )
-            .into_response(),
+            let spec = match spec_result {
+                Ok(s) => s,
+                Err(FetchOrIoError::Timeout) => {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(serde_json::json!({ "error": "Request timed out fetching the spec URL" })),
+                    ).into_response();
+                }
+                Err(FetchOrIoError::Io(msg)) => {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(serde_json::json!({ "error": msg })),
+                    )
+                        .into_response();
+                }
+            };
+
+            // Step 2: convert — parse failure → 400
+            match strex_import::from_openapi(&spec, mode) {
+                Ok(yaml) => {
+                    (StatusCode::OK, Json(serde_json::json!({ "yaml": yaml }))).into_response()
+                }
+                Err(e) => (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({ "error": e.to_string() })),
+                )
+                    .into_response(),
+            }
+        }
     }
 }
 
-async fn fetch_url(
-    client: &reqwest::Client,
-    url: &str,
-) -> Result<String, strex_import::ImportError> {
-    client
-        .get(url)
-        .send()
-        .await
-        .map_err(|e| {
-            if e.is_timeout() {
-                strex_import::ImportError::FetchTimeout {
-                    url: url.to_string(),
-                }
-            } else {
-                strex_import::ImportError::OpenApiParse(e.to_string())
-            }
-        })?
+/// Internal error type for the fetch/read step only.
+enum FetchOrIoError {
+    Timeout,
+    Io(String),
+}
+
+async fn fetch_url(client: &reqwest::Client, url: &str) -> Result<String, FetchOrIoError> {
+    let response = client.get(url).send().await.map_err(|e| {
+        if e.is_timeout() {
+            FetchOrIoError::Timeout
+        } else {
+            FetchOrIoError::Io(format!("Could not fetch URL: {e}"))
+        }
+    })?;
+
+    response
         .text()
         .await
-        .map_err(|e| strex_import::ImportError::OpenApiParse(e.to_string()))
+        .map_err(|e| FetchOrIoError::Io(format!("Could not read response body: {e}")))
 }
 
 /// `POST /api/import/save` — write generated YAML to a file in the current working directory.
