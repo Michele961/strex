@@ -442,4 +442,24 @@ paths:
         let yaml = convert(json, ImportMode::Scaffold).unwrap();
         assert!(yaml.contains("https://api.example.com"));
     }
+
+    #[test]
+    fn missing_operation_id_falls_back_to_method_path() {
+        let spec = r#"
+openapi: "3.0.0"
+info:
+  title: "Test API"
+  version: "1.0"
+servers:
+  - url: "https://api.example.com"
+paths:
+  /items:
+    get:
+      responses:
+        "200":
+          description: OK
+"#;
+        let yaml = convert(spec, ImportMode::Scaffold).unwrap();
+        assert!(yaml.contains("GET /items"));
+    }
 }
