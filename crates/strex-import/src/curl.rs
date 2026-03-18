@@ -105,9 +105,9 @@ fn parse_tokens(tokens: &[String]) -> Result<ParsedCurl, ImportError> {
         }
     });
 
-    // -u user:pass → Authorization: {{credentials}}
+    // -u user:pass → Authorization: Basic {{credentials}}
     if user.is_some() {
-        headers.push(("Authorization".into(), "{{credentials}}".into()));
+        headers.push(("Authorization".into(), "Basic {{credentials}}".into()));
     }
 
     Ok(ParsedCurl {
@@ -138,8 +138,8 @@ fn scrub_headers(headers: Vec<(String, String)>) -> Vec<(String, String)> {
         .into_iter()
         .map(|(name, value)| {
             let lower = name.to_lowercase();
-            // Skip if already a placeholder (e.g. from -u processing)
-            if value.starts_with("{{") {
+            // Skip if already contains a placeholder (e.g. from -u processing)
+            if value.contains("{{") {
                 return (name, value);
             }
             for (sensitive, placeholder) in SENSITIVE_HEADERS {
@@ -380,7 +380,7 @@ mod tests {
             ImportMode::Scaffold,
         )
         .unwrap();
-        assert!(yaml.contains("{{credentials}}"));
+        assert!(yaml.contains("Basic {{credentials}}"));
         assert!(!yaml.contains("secret"));
     }
 
