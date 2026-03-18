@@ -56,7 +56,13 @@ mod tests {
     }
 
     #[test]
-    fn from_openapi_stub_returns_error() {
-        assert!(from_openapi("openapi: \"3.0.0\"", ImportMode::Scaffold).is_err());
+    fn from_openapi_minimal_spec_succeeds() {
+        let result = from_openapi(
+            "openapi: \"3.0.0\"\ninfo:\n  title: test\n  version: 1.0\npaths: {}",
+            ImportMode::Scaffold,
+        );
+        assert!(result.is_ok());
+        let yaml = result.unwrap();
+        assert!(yaml.contains("Imported Collection"));
     }
 }
