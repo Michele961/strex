@@ -127,6 +127,16 @@ jobs:
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
             echo "$HOME/.cargo/bin" >> $GITHUB_PATH
           fi
+      - name: "Setup Node.js"
+        uses: "actions/setup-node@v4"
+        with:
+          "cache": "npm"
+          "cache-dependency-path": "crates/strex-ui/frontend/package-lock.json"
+          "node-version": "20"
+      - name: "Install frontend dependencies"
+        run: "cd crates/strex-ui/frontend && npm ci"
+      - name: "Build frontend"
+        run: "cd crates/strex-ui/frontend && npm run build"
       - name: Install dist
         run: ${{ matrix.install_dist.run }}
       # Get the dist-manifest
@@ -139,15 +149,6 @@ jobs:
       - name: Install dependencies
         run: |
           ${{ matrix.packages_install }}
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-      - name: Build frontend
-        run: |
-          cd crates/strex-ui/frontend
-          npm ci
-          npm run build
       - name: Build artifacts
         run: |
           # Actually do builds and make zips and whatnot
