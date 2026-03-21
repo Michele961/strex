@@ -42,9 +42,10 @@ export function connectPerf(
   ws.onmessage = (msg) => {
     try {
       const event: PerfWsEvent = JSON.parse(msg.data)
+      console.log('[WS] Received perf event:', event)
       onEvent(event)
-    } catch {
-      console.error('Failed to parse perf WebSocket message:', msg.data)
+    } catch (e) {
+      console.error('Failed to parse perf WebSocket message:', msg.data, e)
     }
   }
 

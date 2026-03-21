@@ -23,7 +23,8 @@ pub use interpolation::interpolate;
 pub use parser::parse_collection;
 pub use perf::{
     evaluate_thresholds, run_perf, LoadProfile, MetricKind, PerfError, PerfMetrics, PerfOpts,
-    PerfResult, PerfTick, PerformanceConfig, Threshold, ThresholdCondition, ThresholdResult,
+    PerfResult, PerfTick, PerformanceConfig, RequestMetrics, RequestTick, Threshold,
+    ThresholdCondition, ThresholdResult,
 };
 pub use runner::{
     execute_collection, execute_collection_streaming, execute_collection_with_opts,

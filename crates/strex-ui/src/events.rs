@@ -17,7 +17,7 @@ pub(crate) struct ConsoleLog {
 ///
 /// Tagged with `"type"` field in JSON (e.g. `{"type":"perf_started",...}`).
 #[derive(Debug, Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(tag = "type", rename_all = "PascalCase")]
 pub(crate) enum PerfWsEvent {
     /// Emitted once when the performance test starts.
     Started {
@@ -46,6 +46,8 @@ pub(crate) enum PerfWsEvent {
         avg_response_ms: f64,
         /// Current 95th-percentile iteration duration in milliseconds.
         p95_response_ms: f64,
+        /// Per-request rolling statistics.
+        per_request: Vec<strex_core::RequestTick>,
     },
     /// Emitted once when the test finishes, carrying final metrics and threshold results.
     Finished {
@@ -127,6 +129,36 @@ pub(crate) enum WsEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn perf_started_serializes_with_pascal_case() {
+        let event = PerfWsEvent::Started {
+            vus: 10,
+            duration_secs: 60,
+            load_profile: "fixed".into(),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        println!("PerfWsEvent::Started JSON: {}", json);
+        assert!(json.contains(r#""type":"Started""#));
+    }
+
+    #[test]
+    fn perf_tick_serializes_with_pascal_case() {
+        let event = PerfWsEvent::Tick {
+            elapsed_secs: 5.0,
+            total_iterations: 100,
+            passed_iterations: 95,
+            failed_iterations: 5,
+            throughput_rps: 20.0,
+            error_rate_pct: 5.0,
+            avg_response_ms: 50.0,
+            p95_response_ms: 75.0,
+            per_request: vec![],
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        println!("PerfWsEvent::Tick JSON: {}", json);
+        assert!(json.contains(r#""type":"Tick""#));
+    }
 
     #[test]
     fn iteration_started_serializes_with_type_tag() {

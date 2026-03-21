@@ -4,11 +4,16 @@ target/
 # Worktrees (local development isolation)
 .worktrees/
 
-# Frontend build dependencies
+# Frontend build dependencies and artifacts
 crates/strex-ui/frontend/node_modules/
+crates/strex-ui/frontend/dist/
 
 # Brainstorming session files (visual companion)
 /.superpowers/
+
+# Runtime data directories
+.strex-history/
+**/.strex-perf-history/
 
 # IDE
 .idea/

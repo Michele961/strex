@@ -1,18 +1,12 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { fetchCollections } from '../lib/api'
-  import type { PerfRunConfig, PerfMetrics, ThresholdResult } from '../lib/types'
-
-  interface ChartPoint {
-    elapsed: number
-    throughput: number
-    avg_response: number
-    error_rate: number
-  }
+  import type { PerfRunConfig, PerfMetrics, ThresholdResult, ChartPoint } from '../lib/types'
 
   interface Props {
     onRun: (config: PerfRunConfig) => void
     onStop: () => void
+    onNewRun: () => void
     running: boolean
     started: { vus: number; duration_secs: number; load_profile: string } | null
     tick: {
@@ -24,14 +18,25 @@
       error_rate_pct: number
       avg_response_ms: number
       p95_response_ms: number
+      per_request: Array<{
+        name: string
+        total: number
+        passed: number
+        failed: number
+        throughput_rps: number
+        avg_response_ms: number
+        error_rate_pct: number
+      }>
     } | null
     finalMetrics: PerfMetrics | null
     thresholdResults: ThresholdResult[]
     passed: boolean | null
     error: string | null
+    initialTimeSeries?: ChartPoint[]
+    tickCounter: number
   }
 
-  let { onRun, onStop, running, started, tick, finalMetrics, thresholdResults, passed, error }: Props =
+  let { onRun, onStop, onNewRun, running, started, tick, finalMetrics, thresholdResults, passed, error, initialTimeSeries, tickCounter }: Props =
     $props()
 
   // ── Setup form state ──────────────────────────────────────────────────────
@@ -57,19 +62,29 @@
       .catch((e: unknown) => console.error('Failed to load collections:', e))
   })
 
-  // Append data point on each tick
   $effect(() => {
-    if (tick) {
+    if (initialTimeSeries && initialTimeSeries.length > 0) {
+      timeSeries = initialTimeSeries
+    }
+  })
+
+  $effect(() => {
+    if (tick && tickCounter > 0) {
       const t = tick
-      timeSeries = [
-        ...timeSeries,
-        {
-          elapsed: t.elapsed_secs,
-          throughput: t.throughput_rps,
-          avg_response: t.avg_response_ms,
-          error_rate: t.error_rate_pct,
-        },
-      ]
+      const lastPoint = timeSeries[timeSeries.length - 1]
+      // Only append if this is a new tick (different elapsed time)
+      if (!lastPoint || lastPoint.elapsed_secs !== t.elapsed_secs) {
+        timeSeries = [
+          ...timeSeries,
+          {
+            elapsed_secs: t.elapsed_secs,
+            throughput_rps: t.throughput_rps,
+            avg_response_ms: t.avg_response_ms,
+            error_rate_pct: t.error_rate_pct,
+            p95_response_ms: t.p95_response_ms,
+          },
+        ]
+      }
     }
   })
 
@@ -92,12 +107,29 @@
             error_rate_pct: tick.error_rate_pct,
             throughput_rps: tick.throughput_rps,
             elapsed_secs: tick.elapsed_secs,
+            per_request: [],
+          }
+        : started
+        ? {
+            total_iterations: 0,
+            passed_iterations: 0,
+            failed_iterations: 0,
+            avg_response_ms: 0,
+            min_response_ms: 0,
+            max_response_ms: 0,
+            p50_response_ms: 0,
+            p95_response_ms: 0,
+            p99_response_ms: 0,
+            error_rate_pct: 0,
+            throughput_rps: 0,
+            elapsed_secs: 0,
+            per_request: [],
           }
         : null)
   )
 
-  const maxThroughput = $derived(Math.max(1, ...timeSeries.map((p) => p.throughput)))
-  const maxResponse = $derived(Math.max(1, ...timeSeries.map((p) => p.avg_response)))
+  const maxThroughput = $derived(Math.max(1, ...timeSeries.map((p) => p.throughput_rps)))
+  const maxResponse = $derived(Math.max(1, ...timeSeries.map((p) => p.avg_response_ms)))
 
   // ── SVG load profile preview constants ───────────────────────────────────
   const PV_W = 500
@@ -159,18 +191,39 @@
 
   const throughputPts = $derived.by(() => {
     const dur = started?.duration_secs ?? 1
-    return timeSeries.map((p) => `${xOf(p.elapsed, dur)},${yOf(p.throughput, maxThroughput)}`).join(' ')
+    return timeSeries.map((p) => `${xOf(p.elapsed_secs, dur)},${yOf(p.throughput_rps, maxThroughput)}`).join(' ')
   })
 
   const responsePts = $derived.by(() => {
     const dur = started?.duration_secs ?? 1
-    return timeSeries.map((p) => `${xOf(p.elapsed, dur)},${yOf(p.avg_response, maxResponse)}`).join(' ')
+    return timeSeries.map((p) => `${xOf(p.elapsed_secs, dur)},${yOf(p.avg_response_ms, maxResponse)}`).join(' ')
   })
 
   const errorPts = $derived.by(() => {
     const dur = started?.duration_secs ?? 1
-    return timeSeries.map((p) => `${xOf(p.elapsed, dur)},${yOf(p.error_rate, 100)}`).join(' ')
+    return timeSeries.map((p) => `${xOf(p.elapsed_secs, dur)},${yOf(p.error_rate_pct, 100)}`).join(' ')
   })
+
+  const vuLinePts = $derived.by(() => {
+    if (!started) return ''
+    const dur = started.duration_secs
+    const maxVu = started.vus
+    
+    if (started.load_profile === 'fixed') {
+      const y = yOf(maxVu, maxVu)
+      return `${ML},${y} ${ML + cW},${y}`
+    } else {
+      const halfDur = dur / 2
+      const y1 = MT + cH
+      const yMid = yOf(maxVu, maxVu)
+      const xMid = xOf(halfDur, dur)
+      const xEnd = ML + cW
+      return `${ML},${y1} ${xMid},${yMid} ${xEnd},${yMid}`
+    }
+  })
+
+  const maxErrorRate = 100
+  const maxVuScale = $derived(started?.vus ?? 1)
 
   // ── Helpers ───────────────────────────────────────────────────────────────
   function fmtNum(n: number): string {
@@ -181,19 +234,19 @@
     return n < 1 ? '<1' : `${Math.round(n)}`
   }
 
-  function timeRemainingStr(): string {
+  const timeRemainingStr = $derived.by(() => {
     if (!started) return ''
     const elapsed = tick?.elapsed_secs ?? 0
     const rem = Math.max(0, started.duration_secs - elapsed)
     const m = Math.floor(rem / 60)
     const s = Math.floor(rem % 60)
     return `${m}:${s.toString().padStart(2, '0')} left`
-  }
+  })
 
-  function elapsedPct(): number {
+  const elapsedPct = $derived.by(() => {
     if (!started || !tick) return 0
     return Math.min(100, (tick.elapsed_secs / started.duration_secs) * 100)
-  }
+  })
 
   function condLabel(c: string): string {
     return c === 'Lt' ? '<' : c === 'Lte' ? '≤' : c === 'Gt' ? '>' : '≥'
@@ -424,14 +477,14 @@
           <span class="status-badge in-progress">
             <span class="pulse-dot"></span>In Progress
           </span>
-          <span class="time-remaining">{timeRemainingStr()}</span>
+          <span class="time-remaining">{timeRemainingStr}</span>
           <button class="stop-btn" onclick={onStop}>Stop run</button>
         {:else if passed === true}
           <span class="status-badge passed">✓ Passed</span>
-          <button class="new-run-btn" onclick={() => { timeSeries = [] }}>New run</button>
+          <button class="new-run-btn" onclick={onNewRun}>New run</button>
         {:else if passed === false}
           <span class="status-badge failed">✗ Failed</span>
-          <button class="new-run-btn" onclick={() => { timeSeries = [] }}>New run</button>
+          <button class="new-run-btn" onclick={onNewRun}>New run</button>
         {/if}
       </div>
     </header>
@@ -439,7 +492,7 @@
     <!-- Progress bar (during run) -->
     {#if running}
       <div class="progress-bar-track">
-        <div class="progress-bar-fill" style:width="{elapsedPct()}%"></div>
+        <div class="progress-bar-fill" style:width="{elapsedPct}%"></div>
       </div>
     {/if}
 
@@ -512,6 +565,20 @@
                 stroke-width="1"
               />
             {/each}
+
+            <!-- VU reference line (gray) -->
+            {#if vuLinePts && started}
+              <polyline
+                points={vuLinePts}
+                fill="none"
+                stroke="#555"
+                stroke-width="1.5"
+                stroke-dasharray="4 2"
+                stroke-linejoin="round"
+                stroke-linecap="round"
+              />
+            {/if}
+
             <!-- Throughput line (gold) -->
             {#if throughputPts}
               <polyline
@@ -545,6 +612,19 @@
                 stroke-linecap="round"
               />
             {/if}
+
+            <!-- Left Y-axis labels (ms/%) -->
+            <text x={ML - 4} y={MT + 5} fill="#666" font-size="10" text-anchor="end">
+              {maxResponse.toFixed(0)}ms
+            </text>
+            <text x={ML - 4} y={MT + cH + 4} fill="#666" font-size="10" text-anchor="end">0</text>
+            
+            <!-- Right Y-axis labels (req/s) -->
+            <text x={ML + cW + 4} y={MT + 5} fill="#666" font-size="10" text-anchor="start">
+              {maxThroughput.toFixed(1)} req/s
+            </text>
+            <text x={ML + cW + 4} y={MT + cH + 4} fill="#666" font-size="10" text-anchor="start">0</text>
+
             <!-- X axis -->
             <line x1={ML} y1={MT + cH} x2={ML + cW} y2={MT + cH} stroke="#2a2a4a" stroke-width="1" />
             <!-- X axis labels -->
@@ -560,11 +640,76 @@
               <text x="170" y="0" fill="#aaa" font-size="11">Avg. response (ms)</text>
               <rect x="320" y="-5" width="16" height="2" fill="#f87171" />
               <text x="340" y="0" fill="#aaa" font-size="11">Error %</text>
+              {#if started}
+                <line x1="460" y1="-4" x2="476" y2="-4" stroke="#555" stroke-width="1.5" stroke-dasharray="4 2" />
+                <text x="480" y="0" fill="#aaa" font-size="11">Virtual users</text>
+              {/if}
             </g>
           </svg>
         </div>
       {:else if running}
         <div class="chart-placeholder">Collecting data…</div>
+      {/if}
+
+      <!-- Per-request breakdown table -->
+      {#if (tick && tick.per_request.length > 0) || (finalMetrics && finalMetrics.per_request.length > 0)}
+        <div class="per-request-section">
+          <h3 class="sub-heading">Performance details for total duration</h3>
+          <div class="table-wrapper">
+            <table class="per-request-table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Request</th>
+                  <th>Total</th>
+                  <th>Req/s</th>
+                  <th>Avg ms</th>
+                  <th>Min</th>
+                  <th>Max</th>
+                  <th>P95</th>
+                  <th>P99</th>
+                  <th>Error %</th>
+                  <th>Failure %</th>
+                </tr>
+              </thead>
+              <tbody>
+                {#if finalMetrics && finalMetrics.per_request.length > 0}
+                  {#each finalMetrics.per_request as req, i}
+                    <tr>
+                      <td>{i + 1}</td>
+                      <td class="req-name">{req.name}</td>
+                      <td>{req.total.toLocaleString()}</td>
+                      <td>{req.throughput_rps.toFixed(2)}</td>
+                      <td>{req.avg_response_ms.toFixed(2)}</td>
+                      <td>{req.min_response_ms.toFixed(2)}</td>
+                      <td>{req.max_response_ms.toFixed(2)}</td>
+                      <td>{req.p95_response_ms.toFixed(2)}</td>
+                      <td>{req.p99_response_ms.toFixed(2)}</td>
+                      <td class:metric-error={req.error_rate_pct > 0}>{req.error_rate_pct.toFixed(2)}</td>
+                      <td class:metric-error={req.failed > 0}>{req.total > 0 ? ((req.failed / req.total) * 100).toFixed(2) : '0.00'}</td>
+                    </tr>
+                  {/each}
+                {:else if tick && tick.per_request.length > 0}
+                  {#each tick.per_request as req, i}
+                    <tr>
+                      <td>{i + 1}</td>
+                      <td class="req-name">{req.name}</td>
+                      <td>{req.total.toLocaleString()}</td>
+                      <td>{req.throughput_rps.toFixed(2)}</td>
+                      <td>{req.avg_response_ms.toFixed(2)}</td>
+                      <td>—</td>
+                      <td>—</td>
+                      <td>—</td>
+                      <td>—</td>
+                      <td class:metric-error={req.error_rate_pct > 0}>{req.error_rate_pct.toFixed(2)}</td>
+                      <td class:metric-error={req.failed > 0}>{req.total > 0 ? ((req.failed / req.total) * 100).toFixed(2) : '0.00'}</td>
+                    </tr>
+                  {/each}
+                {/if}
+              </tbody>
+            </table>
+          </div>
+        </div>
       {/if}
     {/if}
 
@@ -1059,4 +1204,53 @@
     width: 24px;
     font-size: 1rem;
   }
+
+  .per-request-section {
+    margin: 24px 28px;
+  }
+
+  .table-wrapper {
+    overflow-x: auto;
+    max-height: 400px;
+    overflow-y: auto;
+    border: 1px solid #1e1e38;
+    border-radius: 8px;
+  }
+
+  .per-request-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.875rem;
+  }
+
+  .per-request-table th {
+    text-align: left;
+    padding: 8px 12px;
+    color: #555;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    border-bottom: 1px solid #1e1e38;
+    background: #0f0f23;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+  }
+
+  .per-request-table td {
+    padding: 10px 12px;
+    border-bottom: 1px solid #13132b;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .per-request-table .req-name {
+    color: #e0e0e0;
+    font-weight: 500;
+  }
+
+  .per-request-table tbody tr:hover {
+    background: #13132b;
+  }
+
 </style>

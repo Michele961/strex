@@ -50,6 +50,11 @@ pub(crate) fn build_router() -> anyhow::Result<Router> {
             post(routes::save_history).get(routes::list_history),
         )
         .route("/api/history/:id", get(routes::get_history))
+        .route(
+            "/api/perf-history",
+            post(routes::save_perf_history).get(routes::list_perf_history),
+        )
+        .route("/api/perf-history/:id", get(routes::get_perf_history))
         .route("/api/import/generate", post(import::generate))
         .route("/api/import/save", post(import::save))
         .route("/ws", any(ws::ws_handler))

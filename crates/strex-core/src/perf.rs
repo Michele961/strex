@@ -18,7 +18,7 @@ use tokio_util::sync::CancellationToken;
 use crate::collection::Collection;
 use crate::context::ExecutionContext;
 use crate::data::DataRow;
-use crate::runner::{execute_collection_with_opts, RunnerOpts};
+use crate::runner::{execute_collection_with_opts, RequestOutcome, RunnerOpts};
 
 // ─── Load profile ────────────────────────────────────────────────────────────
 
@@ -153,6 +153,21 @@ pub struct PerfOpts {
 
 // ─── Live progress tick ───────────────────────────────────────────────────────
 
+/// Per-request rolling stats emitted in each PerfTick.
+///
+/// p95 is omitted because sorting per-request durations on every tick is too
+/// expensive; only the aggregate p95 (over all requests) is available live.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RequestTick {
+    pub name: String,
+    pub total: u64,
+    pub passed: u64,
+    pub failed: u64,
+    pub throughput_rps: f64,
+    pub avg_response_ms: f64,
+    pub error_rate_pct: f64,
+}
+
 /// A live progress snapshot emitted approximately once per second during a run.
 ///
 /// Sent over [`PerfOpts::progress_tx`] if present.
@@ -174,9 +189,22 @@ pub struct PerfTick {
     pub avg_response_ms: f64,
     /// Current 95th-percentile iteration duration in milliseconds.
     pub p95_response_ms: f64,
+    /// Per-request rolling statistics.
+    pub per_request: Vec<RequestTick>,
 }
 
 // ─── Metrics & results ────────────────────────────────────────────────────────
+
+/// Per-request sample data extracted from a single request execution.
+#[derive(Debug, Clone)]
+struct RequestSample {
+    /// Request name from the collection.
+    name: String,
+    /// Duration of this specific request in milliseconds.
+    duration_ms: u64,
+    /// `true` if this request passed all assertions.
+    passed: bool,
+}
 
 /// Raw sample produced by one completed collection iteration inside a VU task.
 #[derive(Debug, Clone)]
@@ -185,6 +213,8 @@ struct IterationSample {
     duration_ms: u64,
     /// `true` if every request in the iteration passed.
     passed: bool,
+    /// Per-request samples for this iteration (Skipped requests excluded).
+    requests: Vec<RequestSample>,
 }
 
 /// Aggregated performance metrics computed after all VU tasks complete.
@@ -214,6 +244,27 @@ pub struct PerfMetrics {
     pub throughput_rps: f64,
     /// Actual elapsed wall-clock duration in seconds.
     pub elapsed_secs: f64,
+    /// Per-request final metrics with full percentile set.
+    pub per_request: Vec<RequestMetrics>,
+}
+
+/// Per-request final stats emitted in PerfMetrics.
+///
+/// Full percentile set available because it is computed once at the end.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RequestMetrics {
+    pub name: String,
+    pub total: u64,
+    pub passed: u64,
+    pub failed: u64,
+    pub avg_response_ms: f64,
+    pub min_response_ms: f64,
+    pub max_response_ms: f64,
+    pub p50_response_ms: f64,
+    pub p95_response_ms: f64,
+    pub p99_response_ms: f64,
+    pub error_rate_pct: f64,
+    pub throughput_rps: f64,
 }
 
 /// Result of evaluating a single [`Threshold`] against final [`PerfMetrics`].
@@ -276,6 +327,128 @@ pub(crate) fn percentile(sorted: &[u64], p: f64) -> f64 {
     sorted[idx] as f64
 }
 
+fn compute_per_request_tick(samples: &[IterationSample], elapsed_secs: f64) -> Vec<RequestTick> {
+    let mut request_groups: Vec<(String, Vec<(u64, bool)>)> = Vec::new();
+
+    for sample in samples {
+        for req in &sample.requests {
+            if let Some((_, group)) = request_groups
+                .iter_mut()
+                .find(|(name, _)| name == &req.name)
+            {
+                group.push((req.duration_ms, req.passed));
+            } else {
+                request_groups.push((req.name.clone(), vec![(req.duration_ms, req.passed)]));
+            }
+        }
+    }
+
+    request_groups
+        .into_iter()
+        .map(|(name, entries)| {
+            let total = entries.len() as u64;
+            let passed = entries.iter().filter(|(_, p)| *p).count() as u64;
+            let failed = total - passed;
+            let sum: u64 = entries.iter().map(|(d, _)| d).sum();
+            let avg_response_ms = if total > 0 {
+                sum as f64 / total as f64
+            } else {
+                0.0
+            };
+            let error_rate_pct = if total > 0 {
+                failed as f64 / total as f64 * 100.0
+            } else {
+                0.0
+            };
+            let throughput_rps = if elapsed_secs > 0.0 {
+                total as f64 / elapsed_secs
+            } else {
+                0.0
+            };
+
+            RequestTick {
+                name,
+                total,
+                passed,
+                failed,
+                throughput_rps,
+                avg_response_ms,
+                error_rate_pct,
+            }
+        })
+        .collect()
+}
+
+fn compute_per_request_metrics(
+    samples: &[IterationSample],
+    elapsed_secs: f64,
+) -> Vec<RequestMetrics> {
+    let mut request_groups: Vec<(String, Vec<(u64, bool)>)> = Vec::new();
+
+    for sample in samples {
+        for req in &sample.requests {
+            if let Some((_, group)) = request_groups
+                .iter_mut()
+                .find(|(name, _)| name == &req.name)
+            {
+                group.push((req.duration_ms, req.passed));
+            } else {
+                request_groups.push((req.name.clone(), vec![(req.duration_ms, req.passed)]));
+            }
+        }
+    }
+
+    request_groups
+        .into_iter()
+        .map(|(name, entries)| {
+            let total = entries.len() as u64;
+            let passed = entries.iter().filter(|(_, p)| *p).count() as u64;
+            let failed = total - passed;
+
+            let mut durations: Vec<u64> = entries.iter().map(|(d, _)| *d).collect();
+            durations.sort_unstable();
+
+            let sum: u64 = durations.iter().sum();
+            let avg_response_ms = if total > 0 {
+                sum as f64 / total as f64
+            } else {
+                0.0
+            };
+            let min_response_ms = *durations.first().unwrap_or(&0) as f64;
+            let max_response_ms = *durations.last().unwrap_or(&0) as f64;
+            let p50_response_ms = percentile(&durations, 0.50);
+            let p95_response_ms = percentile(&durations, 0.95);
+            let p99_response_ms = percentile(&durations, 0.99);
+
+            let error_rate_pct = if total > 0 {
+                failed as f64 / total as f64 * 100.0
+            } else {
+                0.0
+            };
+            let throughput_rps = if elapsed_secs > 0.0 {
+                total as f64 / elapsed_secs
+            } else {
+                0.0
+            };
+
+            RequestMetrics {
+                name,
+                total,
+                passed,
+                failed,
+                avg_response_ms,
+                min_response_ms,
+                max_response_ms,
+                p50_response_ms,
+                p95_response_ms,
+                p99_response_ms,
+                error_rate_pct,
+                throughput_rps,
+            }
+        })
+        .collect()
+}
+
 /// Compute [`PerfMetrics`] from an accumulated sample set.
 fn compute_metrics(samples: &[IterationSample], elapsed_secs: f64) -> PerfMetrics {
     if samples.is_empty() {
@@ -292,6 +465,7 @@ fn compute_metrics(samples: &[IterationSample], elapsed_secs: f64) -> PerfMetric
             error_rate_pct: 0.0,
             throughput_rps: 0.0,
             elapsed_secs,
+            per_request: vec![],
         };
     }
 
@@ -321,6 +495,8 @@ fn compute_metrics(samples: &[IterationSample], elapsed_secs: f64) -> PerfMetric
         0.0
     };
 
+    let per_request = compute_per_request_metrics(samples, elapsed_secs);
+
     PerfMetrics {
         total_iterations: total,
         passed_iterations: passed,
@@ -334,6 +510,7 @@ fn compute_metrics(samples: &[IterationSample], elapsed_secs: f64) -> PerfMetric
         error_rate_pct: error_rate,
         throughput_rps: throughput,
         elapsed_secs,
+        per_request,
     }
 }
 
@@ -363,6 +540,8 @@ fn compute_tick(samples: &[IterationSample], elapsed_secs: f64) -> PerfTick {
         0.0
     };
 
+    let per_request = compute_per_request_tick(samples, elapsed_secs);
+
     PerfTick {
         elapsed_secs,
         total_iterations: total,
@@ -372,6 +551,7 @@ fn compute_tick(samples: &[IterationSample], elapsed_secs: f64) -> PerfTick {
         error_rate_pct: error_rate,
         avg_response_ms: avg,
         p95_response_ms: p95,
+        per_request,
     }
 }
 
@@ -457,9 +637,20 @@ async fn run_vu(
                     .map(|r| r.duration_ms)
                     .sum();
                 let passed = col_result.passed();
+
+                let requests: Vec<RequestSample> = col_result.request_results
+                    .iter()
+                    .filter(|r| !matches!(r.outcome, RequestOutcome::Skipped))
+                    .map(|r| RequestSample {
+                        name: r.name.clone(),
+                        duration_ms: r.duration_ms,
+                        passed: matches!(r.outcome, RequestOutcome::Passed),
+                    })
+                    .collect();
+
                 // Lock is held only briefly — never across an await point.
                 if let Ok(mut guard) = samples.lock() {
-                    guard.push(IterationSample { duration_ms, passed });
+                    guard.push(IterationSample { duration_ms, passed, requests });
                 }
             }
         }
@@ -825,10 +1016,12 @@ mod tests {
             IterationSample {
                 duration_ms: 100,
                 passed: true,
+                requests: vec![],
             },
             IterationSample {
                 duration_ms: 200,
                 passed: true,
+                requests: vec![],
             },
         ];
         let m = compute_metrics(&samples, 1.0);
@@ -845,6 +1038,7 @@ mod tests {
         let samples = vec![IterationSample {
             duration_ms: 50,
             passed: true,
+            requests: vec![],
         }];
         let m = compute_metrics(&samples, 0.0);
         assert_eq!(m.throughput_rps, 0.0);

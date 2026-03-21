@@ -116,3 +116,28 @@ pub async fn get_history(Path(id): Path<String>) -> impl IntoResponse {
         Err(_) => (StatusCode::NOT_FOUND, "Run not found").into_response(),
     }
 }
+
+/// `POST /api/perf-history` — persist a completed performance run and return its id.
+///
+/// Typed body extraction via `Json<SavePerfRunRequest>` returns `400` on missing fields.
+pub async fn save_perf_history(
+    Json(body): Json<crate::perf_history::SavePerfRunRequest>,
+) -> impl IntoResponse {
+    match crate::perf_history::save_perf_run(&body) {
+        Ok(id) => Json(serde_json::json!({ "id": id })).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+/// `GET /api/perf-history` — list all saved performance runs ordered newest-first.
+pub async fn list_perf_history() -> impl IntoResponse {
+    Json(crate::perf_history::list_perf_runs())
+}
+
+/// `GET /api/perf-history/:id` — return the full payload for a single performance run.
+pub async fn get_perf_history(Path(id): Path<String>) -> impl IntoResponse {
+    match crate::perf_history::load_perf_run(&id) {
+        Ok(v) => Json(v).into_response(),
+        Err(_) => (StatusCode::NOT_FOUND, "Perf run not found").into_response(),
+    }
+}

@@ -6,6 +6,7 @@ mod collections;
 mod events;
 mod history;
 mod import;
+mod perf_history;
 mod request_list;
 mod routes;
 mod server;

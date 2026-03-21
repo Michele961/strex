@@ -210,6 +210,7 @@ async fn run_perf_and_stream(socket: &mut WebSocket, config: PerfRunConfig) -> a
                 error_rate_pct: tick.error_rate_pct,
                 avg_response_ms: tick.avg_response_ms,
                 p95_response_ms: tick.p95_response_ms,
+                per_request: tick.per_request,
             },
         )
         .await;
