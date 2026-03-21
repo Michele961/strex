@@ -10,6 +10,7 @@ crates/strex-ui/frontend/dist/
 
 # Brainstorming session files (visual companion)
 /.superpowers/
+docs/superpowers/
 
 # Runtime data directories
 .strex-history/
