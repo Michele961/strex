@@ -177,8 +177,10 @@ pub async fn run_collection_with_data(
         }
 
         if idx > 0 && opts.delay_between_iterations_ms > 0 {
-            tokio::time::sleep(std::time::Duration::from_millis(opts.delay_between_iterations_ms))
-                .await;
+            tokio::time::sleep(std::time::Duration::from_millis(
+                opts.delay_between_iterations_ms,
+            ))
+            .await;
         }
 
         let col = Arc::clone(&arc_col);

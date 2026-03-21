@@ -13,6 +13,51 @@ pub(crate) struct ConsoleLog {
     pub message: String,
 }
 
+/// Events streamed from the server to the browser over the **perf** WebSocket.
+///
+/// Tagged with `"type"` field in JSON (e.g. `{"type":"perf_started",...}`).
+#[derive(Debug, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub(crate) enum PerfWsEvent {
+    /// Emitted once when the performance test starts.
+    Started {
+        /// Number of virtual users.
+        vus: usize,
+        /// Total test duration in seconds.
+        duration_secs: u64,
+        /// Load profile: `"fixed"` or `"ramp_up"`.
+        load_profile: String,
+    },
+    /// Emitted approximately once per second with live metrics.
+    Tick {
+        /// Seconds elapsed since the test started.
+        elapsed_secs: f64,
+        /// Total completed iterations so far.
+        total_iterations: u64,
+        /// Iterations that passed.
+        passed_iterations: u64,
+        /// Iterations that failed.
+        failed_iterations: u64,
+        /// Current throughput in iterations per second.
+        throughput_rps: f64,
+        /// Current error rate as a percentage (0.0–100.0).
+        error_rate_pct: f64,
+        /// Current mean iteration duration in milliseconds.
+        avg_response_ms: f64,
+        /// Current 95th-percentile iteration duration in milliseconds.
+        p95_response_ms: f64,
+    },
+    /// Emitted once when the test finishes, carrying final metrics and threshold results.
+    Finished {
+        /// All aggregate metrics.
+        metrics: strex_core::PerfMetrics,
+        /// Threshold evaluation results.
+        threshold_results: Vec<strex_core::ThresholdResult>,
+        /// `true` if all thresholds passed (or no thresholds were defined).
+        passed: bool,
+    },
+}
+
 /// Events streamed from the server to the browser over WebSocket.
 ///
 /// Tagged with `"type"` field in JSON (e.g. `{"type":"run_started","total":3}`).

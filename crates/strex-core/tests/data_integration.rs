@@ -101,6 +101,7 @@ fn simple_collection(url: &str) -> Collection {
             timeout: None,
             on_failure: None,
         }],
+        performance: None,
     }
 }
 
@@ -130,6 +131,7 @@ fn collection_with_status_assertion(url: &str, code: u64) -> Collection {
             timeout: None,
             on_failure: None,
         }],
+        performance: None,
     }
 }
 

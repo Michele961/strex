@@ -18,6 +18,7 @@ fn collection(requests: Vec<Request>) -> Collection {
         environment: HashMap::new(),
         variables: HashMap::new(),
         requests,
+        performance: None,
     }
 }
 
@@ -31,6 +32,7 @@ fn collection_with_vars(
         environment: HashMap::new(),
         variables,
         requests,
+        performance: None,
     }
 }
 

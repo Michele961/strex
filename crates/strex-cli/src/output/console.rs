@@ -159,6 +159,7 @@ mod tests {
                 timeout: None,
                 on_failure: None,
             }],
+            performance: None,
         }
     }
 

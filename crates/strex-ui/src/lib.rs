@@ -10,5 +10,6 @@ mod request_list;
 mod routes;
 mod server;
 mod ws;
+mod ws_perf;
 
 pub use server::{start_server, ServerOpts};

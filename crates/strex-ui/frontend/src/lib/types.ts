@@ -76,3 +76,56 @@ export interface RunSummary {
   failed: number
   skipped: number
 }
+
+// ── Performance testing ───────────────────────────────────────────────────────
+
+export interface PerfRunConfig {
+  collection: string
+  vus?: number
+  duration_secs?: number
+  load_profile?: 'fixed' | 'ramp_up'
+  initial_vus?: number
+  thresholds: string[]
+  data?: string
+}
+
+export interface PerfMetrics {
+  total_iterations: number
+  passed_iterations: number
+  failed_iterations: number
+  avg_response_ms: number
+  min_response_ms: number
+  max_response_ms: number
+  p50_response_ms: number
+  p95_response_ms: number
+  p99_response_ms: number
+  error_rate_pct: number
+  throughput_rps: number
+  elapsed_secs: number
+}
+
+export interface ThresholdResult {
+  threshold: {
+    metric: string
+    condition: string
+    value: number
+  }
+  observed: number
+  passed: boolean
+}
+
+export type PerfWsEvent =
+  | { type: 'Started'; vus: number; duration_secs: number; load_profile: string }
+  | {
+      type: 'Tick'
+      elapsed_secs: number
+      total_iterations: number
+      passed_iterations: number
+      failed_iterations: number
+      throughput_rps: number
+      error_rate_pct: number
+      avg_response_ms: number
+      p95_response_ms: number
+    }
+  | { type: 'Finished'; metrics: PerfMetrics; threshold_results: ThresholdResult[]; passed: boolean }
+  | { type: 'error'; message: string }

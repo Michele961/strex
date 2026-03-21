@@ -8,6 +8,7 @@ mod error;
 mod http;
 mod interpolation;
 mod parser;
+pub mod perf;
 mod runner;
 
 pub use collection::{Body, BodyType, Collection, OnFailure, Request};
@@ -20,6 +21,10 @@ pub use error::{AssertionFailure, AssertionType, CollectionError, RequestError};
 pub use http::{HttpResponse, RequestTiming};
 pub use interpolation::interpolate;
 pub use parser::parse_collection;
+pub use perf::{
+    evaluate_thresholds, run_perf, LoadProfile, MetricKind, PerfError, PerfMetrics, PerfOpts,
+    PerfResult, PerfTick, PerformanceConfig, Threshold, ThresholdCondition, ThresholdResult,
+};
 pub use runner::{
     execute_collection, execute_collection_streaming, execute_collection_with_opts,
     CollectionResult, RequestOutcome, RequestResult, RunnerOpts,

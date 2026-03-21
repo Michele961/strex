@@ -1,4 +1,4 @@
-import type { RunConfig, WsEvent } from './types'
+import type { RunConfig, WsEvent, PerfRunConfig, PerfWsEvent } from './types'
 
 export function connectRun(
   config: RunConfig,
@@ -23,6 +23,33 @@ export function connectRun(
 
   ws.onclose = () => onClose()
   ws.onerror = (e) => console.error('WebSocket error:', e)
+
+  return ws
+}
+
+export function connectPerf(
+  config: PerfRunConfig,
+  onEvent: (event: PerfWsEvent) => void,
+  onClose: () => void
+): WebSocket {
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  const ws = new WebSocket(`${protocol}//${window.location.host}/ws/perf`)
+
+  ws.onopen = () => {
+    ws.send(JSON.stringify(config))
+  }
+
+  ws.onmessage = (msg) => {
+    try {
+      const event: PerfWsEvent = JSON.parse(msg.data)
+      onEvent(event)
+    } catch {
+      console.error('Failed to parse perf WebSocket message:', msg.data)
+    }
+  }
+
+  ws.onclose = () => onClose()
+  ws.onerror = (e) => console.error('Perf WebSocket error:', e)
 
   return ws
 }

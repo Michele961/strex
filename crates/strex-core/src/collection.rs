@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use crate::perf::PerformanceConfig;
+
 /// Action to take when a request fails (any assertion fails or a script throws).
 ///
 /// Deserializes from two YAML shapes:
@@ -71,6 +73,13 @@ pub struct Collection {
     pub variables: HashMap<String, Option<String>>,
     /// Ordered list of HTTP requests to execute.
     pub requests: Vec<Request>,
+    /// Optional performance test configuration embedded in the collection file.
+    ///
+    /// When present, the `perf` subcommand uses these values as defaults
+    /// (CLI flags always override them). The `run` and `validate` subcommands
+    /// ignore this field entirely.
+    #[serde(default)]
+    pub performance: Option<PerformanceConfig>,
 }
 
 /// A single HTTP request definition within a collection.
@@ -179,6 +188,7 @@ mod tests {
                 timeout: None,
                 on_failure: None,
             }],
+            performance: None,
         };
         let cloned = col.clone();
         assert_eq!(cloned.name, "c");

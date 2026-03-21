@@ -24,6 +24,7 @@ fn make_collection(req_name: &str) -> Collection {
             timeout: None,
             on_failure: None,
         }],
+        performance: None,
     }
 }
 
@@ -120,6 +121,7 @@ fn special_chars_in_names_are_xml_escaped() {
             timeout: None,
             on_failure: None,
         }],
+        performance: None,
     };
     let col_result = CollectionResult {
         request_results: vec![RequestResult {

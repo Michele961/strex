@@ -26,6 +26,8 @@ serde_json = "1"
 serde_yaml = "0.9"
 # Web UI server — started by `strex ui` subcommand
 strex-ui = { path = "../strex-ui" }
+# HTTP client — used in `strex perf` to build a shared connection-pool client for VUs
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 
 [dev-dependencies]
 # Temporary files for validate integration tests

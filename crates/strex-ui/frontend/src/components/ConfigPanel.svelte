@@ -1,14 +1,18 @@
 <script lang="ts">
   import { fetchCollections, fetchCollectionRequests, fetchDataPreview } from '../lib/api'
   import ImportModal from './ImportModal.svelte'
-  import type { RunConfig, RequestSequenceItem } from '../lib/types'
+  import type { RunConfig, PerfRunConfig, RequestSequenceItem } from '../lib/types'
 
   interface Props {
     onRun: (config: RunConfig) => void
+    onPerfRun: (config: PerfRunConfig) => void
     running: boolean
+    perfRunning: boolean
+    activeTab: 'functional' | 'performance'
+    onTabChange: (tab: 'functional' | 'performance') => void
   }
 
-  let { onRun, running }: Props = $props()
+  let { onRun, onPerfRun, running, perfRunning, activeTab, onTabChange }: Props = $props()
 
   let collections = $state<string[]>([])
   let selectedCollection = $state('')
@@ -18,13 +22,20 @@
   let iterations = $state<number | null>(null)
   let delayRequests = $state(0)
   let delayIterations = $state(0)
-  let activeTab = $state<'functional' | 'performance'>('functional')
   let requestSequence = $state<RequestSequenceItem[]>([])
   let sequenceLoading = $state(false)
   let dataPreview = $state<Record<string, string>[]>([])
   let dataPreviewError = $state<string | null>(null)
   let dataPreviewLoading = $state(false)
   let showImportModal = $state(false)
+
+  // ── Performance tab state ──────────────────────────────────────────────────
+  let perfVus = $state(10)
+  let perfDuration = $state(30)
+  let perfLoadProfile = $state<'fixed' | 'ramp_up'>('fixed')
+  let perfInitialVus = $state(1)
+  let perfThresholdsRaw = $state('')
+  let perfDataFile = $state('')
 
   const methodColors: Record<string, string> = {
     GET: '#61affe',
@@ -116,6 +127,23 @@
       })
       .catch((e: unknown) => console.error('Failed to refresh collections:', e))
   }
+
+  function handlePerfRun() {
+    if (!selectedCollection) return
+    const thresholds = perfThresholdsRaw
+      .split('\n')
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0)
+    onPerfRun({
+      collection: selectedCollection,
+      vus: Number(perfVus),
+      duration_secs: Number(perfDuration),
+      load_profile: perfLoadProfile,
+      initial_vus: perfLoadProfile === 'ramp_up' ? Number(perfInitialVus) : undefined,
+      thresholds,
+      data: perfDataFile.trim() || undefined,
+    })
+  }
 </script>
 
 <aside class="config-panel">
@@ -128,16 +156,86 @@
     <button
       class="tab"
       class:active={activeTab === 'functional'}
-      onclick={() => (activeTab = 'functional')}
+      onclick={() => onTabChange('functional')}
     >
       Functional
     </button>
-    <button class="tab" disabled title="Coming soon">
+    <button
+      class="tab"
+      class:active={activeTab === 'performance'}
+      onclick={() => onTabChange('performance')}
+    >
       Performance
     </button>
   </nav>
 
-  {#if activeTab === 'functional'}
+  {#if activeTab === 'performance'}
+    <div class="form">
+      <label class="field">
+        <span>Collection</span>
+        {#if collections.length > 0}
+          <select bind:value={selectedCollection}>
+            {#each collections as file}
+              <option value={file}>{file}</option>
+            {/each}
+          </select>
+        {:else}
+          <p class="hint">No .yaml files found in the current directory.</p>
+        {/if}
+      </label>
+
+      <label class="field">
+        <span>Virtual Users (VUs)</span>
+        <input type="number" min="1" max="500" bind:value={perfVus} />
+      </label>
+
+      <label class="field">
+        <span>Duration <em>(seconds)</em></span>
+        <input type="number" min="1" bind:value={perfDuration} />
+      </label>
+
+      <label class="field">
+        <span>Load Profile</span>
+        <select bind:value={perfLoadProfile}>
+          <option value="fixed">Fixed</option>
+          <option value="ramp_up">Ramp-up</option>
+        </select>
+      </label>
+
+      {#if perfLoadProfile === 'ramp_up'}
+        <label class="field">
+          <span>Initial VUs</span>
+          <input type="number" min="1" bind:value={perfInitialVus} />
+        </label>
+      {/if}
+
+      <label class="field">
+        <span>Thresholds <em>(one per line, e.g. p95_response_ms:lt:500)</em></span>
+        <textarea
+          rows="3"
+          placeholder="p95_response_ms:lt:500&#10;error_rate_pct:lt:1"
+          bind:value={perfThresholdsRaw}
+        ></textarea>
+      </label>
+
+      <label class="field">
+        <span>Data file <em>(optional)</em></span>
+        <input
+          type="text"
+          placeholder="path/to/data.csv or data.json"
+          bind:value={perfDataFile}
+        />
+      </label>
+
+      <button
+        class="run-button"
+        onclick={handlePerfRun}
+        disabled={perfRunning || !selectedCollection}
+      >
+        {perfRunning ? 'Running…' : 'Run Performance Test'}
+      </button>
+    </div>
+  {:else if activeTab === 'functional'}
     <div class="form">
       <label class="field">
         <span>Collection</span>
@@ -354,7 +452,8 @@
 
   .field select,
   .field input[type='text'],
-  .field input[type='number'] {
+  .field input[type='number'],
+  .field textarea {
     background: #0f0f23;
     border: 1px solid #333;
     border-radius: 4px;
@@ -363,6 +462,7 @@
     font-size: 0.875rem;
     width: 100%;
     box-sizing: border-box;
+    resize: vertical;
   }
 
   .field.checkbox {

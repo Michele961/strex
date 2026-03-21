@@ -7,6 +7,9 @@ use crate::cli::OutputFormat;
 pub mod console;
 pub mod json;
 pub mod junit;
+pub mod perf;
+pub mod perf_console;
+pub mod perf_json;
 
 /// Aggregated result passed to all output formatters.
 ///
@@ -109,6 +112,7 @@ mod tests {
                 timeout: None,
                 on_failure: None,
             }],
+            performance: None,
         }
     }
 

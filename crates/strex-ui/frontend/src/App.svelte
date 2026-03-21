@@ -1,11 +1,15 @@
 <script lang="ts">
-  import { connectRun } from './lib/ws'
+  import { connectRun, connectPerf } from './lib/ws'
   import { saveHistory } from './lib/api'
-  import type { RunConfig, WsEvent, ResultItem } from './lib/types'
+  import type { RunConfig, WsEvent, ResultItem, PerfRunConfig, PerfWsEvent, PerfMetrics, ThresholdResult } from './lib/types'
   import ConfigPanel from './components/ConfigPanel.svelte'
   import ResultsPanel from './components/ResultsPanel.svelte'
   import HistoryPanel from './components/HistoryPanel.svelte'
+  import PerfPanel from './components/PerfPanel.svelte'
 
+  let activeTab = $state<'functional' | 'performance'>('functional')
+
+  // ── Functional run state ──────────────────────────────────────────────────
   let running = $state(false)
   let items = $state<ResultItem[]>([])
   let total = $state(0)
@@ -84,13 +88,91 @@
       }
     )
   }
+
+  // ── Performance run state ─────────────────────────────────────────────────
+  let perfRunning = $state(false)
+  let perfStarted = $state<{ vus: number; duration_secs: number; load_profile: string } | null>(null)
+  let perfTick = $state<{
+    elapsed_secs: number
+    total_iterations: number
+    passed_iterations: number
+    failed_iterations: number
+    throughput_rps: number
+    error_rate_pct: number
+    avg_response_ms: number
+    p95_response_ms: number
+  } | null>(null)
+  let perfFinalMetrics = $state<PerfMetrics | null>(null)
+  let perfThresholdResults = $state<ThresholdResult[]>([])
+  let perfPassed = $state<boolean | null>(null)
+  let perfError = $state<string | null>(null)
+
+  function handlePerfRun(config: PerfRunConfig) {
+    perfStarted = null
+    perfTick = null
+    perfFinalMetrics = null
+    perfThresholdResults = []
+    perfPassed = null
+    perfError = null
+    perfRunning = true
+
+    connectPerf(
+      config,
+      (event: PerfWsEvent) => {
+        if (event.type === 'Started') {
+          perfStarted = { vus: event.vus, duration_secs: event.duration_secs, load_profile: event.load_profile }
+        } else if (event.type === 'Tick') {
+          perfTick = {
+            elapsed_secs: event.elapsed_secs,
+            total_iterations: event.total_iterations,
+            passed_iterations: event.passed_iterations,
+            failed_iterations: event.failed_iterations,
+            throughput_rps: event.throughput_rps,
+            error_rate_pct: event.error_rate_pct,
+            avg_response_ms: event.avg_response_ms,
+            p95_response_ms: event.p95_response_ms,
+          }
+        } else if (event.type === 'Finished') {
+          perfFinalMetrics = event.metrics
+          perfThresholdResults = event.threshold_results
+          perfPassed = event.passed
+          perfRunning = false
+        } else if (event.type === 'error') {
+          perfError = event.message
+          perfRunning = false
+        }
+      },
+      () => {
+        perfRunning = false
+      }
+    )
+  }
 </script>
 
 <div class="app">
-  <ConfigPanel onRun={handleRun} {running} />
+  <ConfigPanel
+    onRun={handleRun}
+    onPerfRun={handlePerfRun}
+    {running}
+    {perfRunning}
+    {activeTab}
+    onTabChange={(tab) => (activeTab = tab)}
+  />
   <div class="main-column">
-    <ResultsPanel {items} {running} {total} {summary} />
-    <HistoryPanel refresh={historyRefresh} />
+    {#if activeTab === 'performance'}
+      <PerfPanel
+        running={perfRunning}
+        started={perfStarted}
+        tick={perfTick}
+        finalMetrics={perfFinalMetrics}
+        thresholdResults={perfThresholdResults}
+        passed={perfPassed}
+        error={perfError}
+      />
+    {:else}
+      <ResultsPanel {items} {running} {total} {summary} />
+      <HistoryPanel refresh={historyRefresh} />
+    {/if}
   </div>
 </div>
 

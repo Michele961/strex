@@ -9,7 +9,7 @@ use axum::{
 };
 use tower_http::cors::CorsLayer;
 
-use crate::{import, request_list, routes, ws};
+use crate::{import, request_list, routes, ws, ws_perf};
 
 /// Shared application state threaded through all route handlers.
 #[derive(Clone)]
@@ -53,6 +53,7 @@ pub(crate) fn build_router() -> anyhow::Result<Router> {
         .route("/api/import/generate", post(import::generate))
         .route("/api/import/save", post(import::save))
         .route("/ws", any(ws::ws_handler))
+        .route("/ws/perf", any(ws_perf::ws_perf_handler))
         .layer(CorsLayer::permissive())
         .with_state(state))
 }
