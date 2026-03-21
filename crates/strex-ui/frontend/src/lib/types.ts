@@ -76,3 +76,118 @@ export interface RunSummary {
   failed: number
   skipped: number
 }
+
+// ── Performance testing ───────────────────────────────────────────────────────
+
+export interface RequestTick {
+  name: string
+  total: number
+  passed: number
+  failed: number
+  throughput_rps: number
+  avg_response_ms: number
+  error_rate_pct: number
+}
+
+export interface RequestMetrics {
+  name: string
+  total: number
+  passed: number
+  failed: number
+  avg_response_ms: number
+  min_response_ms: number
+  max_response_ms: number
+  p50_response_ms: number
+  p95_response_ms: number
+  p99_response_ms: number
+  error_rate_pct: number
+  throughput_rps: number
+}
+
+export interface PerfRunConfig {
+  collection: string
+  vus?: number
+  duration_secs?: number
+  load_profile?: 'fixed' | 'ramp_up'
+  initial_vus?: number
+  thresholds: string[]
+  data?: string
+}
+
+export interface PerfTick {
+  elapsed_secs: number
+  total_iterations: number
+  passed_iterations: number
+  failed_iterations: number
+  throughput_rps: number
+  error_rate_pct: number
+  avg_response_ms: number
+  p95_response_ms: number
+  per_request: RequestTick[]
+}
+
+export interface PerfMetrics {
+  total_iterations: number
+  passed_iterations: number
+  failed_iterations: number
+  avg_response_ms: number
+  min_response_ms: number
+  max_response_ms: number
+  p50_response_ms: number
+  p95_response_ms: number
+  p99_response_ms: number
+  error_rate_pct: number
+  throughput_rps: number
+  elapsed_secs: number
+  per_request: RequestMetrics[]
+}
+
+export interface ThresholdResult {
+  threshold: {
+    metric: string
+    condition: string
+    value: number
+  }
+  observed: number
+  passed: boolean
+}
+
+export interface ChartPoint {
+  elapsed_secs: number
+  throughput_rps: number
+  avg_response_ms: number
+  error_rate_pct: number
+  p95_response_ms: number
+}
+
+export type PerfWsEvent =
+  | { type: 'Started'; vus: number; duration_secs: number; load_profile: string }
+  | {
+      type: 'Tick'
+      elapsed_secs: number
+      total_iterations: number
+      passed_iterations: number
+      failed_iterations: number
+      throughput_rps: number
+      error_rate_pct: number
+      avg_response_ms: number
+      p95_response_ms: number
+      per_request: RequestTick[]
+    }
+  | { type: 'Finished'; metrics: PerfMetrics; threshold_results: ThresholdResult[]; passed: boolean }
+  | { type: 'error'; message: string }
+
+export interface PerfRunSummary {
+  id: string
+  timestamp: string
+  collection: string
+  vus: number
+  duration_secs: number
+  load_profile: string
+  total_iterations: number
+  throughput_rps: number
+  avg_response_ms: number
+  p95_response_ms: number
+  error_rate_pct: number
+  passed: boolean
+}

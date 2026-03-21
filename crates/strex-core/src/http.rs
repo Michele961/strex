@@ -335,7 +335,9 @@ mod tests {
 
         let client = make_client();
         let req = make_get(&format!("{}/notfound", server.uri()));
-        let resp = send(&client, &req).await.expect("404 should be Ok, not Err");
+        let resp = send(&client, &req)
+            .await
+            .expect("404 should be Ok, not Err");
 
         assert_eq!(resp.status, 404);
     }

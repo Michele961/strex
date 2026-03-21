@@ -189,7 +189,9 @@ pub async fn execute_collection_with_opts(
                             });
                             i += 1;
                         }
-                        return CollectionResult { request_results: results };
+                        return CollectionResult {
+                            request_results: results,
+                        };
                     }
                     OnFailure::SkipTo(target) => {
                         if let Some(&target_idx) = name_to_index.get(target.as_str()) {
@@ -204,7 +206,9 @@ pub async fn execute_collection_with_opts(
         i += 1;
     }
 
-    CollectionResult { request_results: results }
+    CollectionResult {
+        request_results: results,
+    }
 }
 
 /// Run all requests sequentially, invoking `on_result` after each one completes.
@@ -284,7 +288,9 @@ where
                             results.push(skipped);
                             i += 1;
                         }
-                        return CollectionResult { request_results: results };
+                        return CollectionResult {
+                            request_results: results,
+                        };
                     }
                     OnFailure::SkipTo(target) => {
                         if let Some(&target_idx) = name_to_index.get(target.as_str()) {
@@ -299,7 +305,9 @@ where
         i += 1;
     }
 
-    CollectionResult { request_results: results }
+    CollectionResult {
+        request_results: results,
+    }
 }
 
 fn is_failure(outcome: &RequestOutcome) -> bool {

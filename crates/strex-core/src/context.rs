@@ -72,6 +72,7 @@ mod tests {
             environment,
             variables,
             requests: vec![],
+            performance: None,
         }
     }
 

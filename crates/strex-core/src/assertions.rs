@@ -610,7 +610,10 @@ mod tests {
         let resp = response_with_header(200, "content-type", "application/json; charset=utf-8");
         let (passed, failures) = evaluate(&raw, &resp, &empty_vars()).unwrap();
         assert!(failures.is_empty(), "{failures:?}");
-        assert_eq!(passed, vec!["header content-type contains application/json"]);
+        assert_eq!(
+            passed,
+            vec!["header content-type contains application/json"]
+        );
     }
 
     #[test]

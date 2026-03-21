@@ -18,7 +18,6 @@
   let iterations = $state<number | null>(null)
   let delayRequests = $state(0)
   let delayIterations = $state(0)
-  let activeTab = $state<'functional' | 'performance'>('functional')
   let requestSequence = $state<RequestSequenceItem[]>([])
   let sequenceLoading = $state(false)
   let dataPreview = $state<Record<string, string>[]>([])
@@ -34,7 +33,6 @@
     DELETE: '#f93e3e',
   }
 
-  // Load collection list on mount
   $effect(() => {
     fetchCollections()
       .then((files) => {
@@ -44,7 +42,6 @@
       .catch((e: unknown) => console.error('Failed to load collections:', e))
   })
 
-  // Load request sequence when selected collection changes
   $effect(() => {
     if (!selectedCollection) {
       requestSequence = []
@@ -52,18 +49,11 @@
     }
     sequenceLoading = true
     fetchCollectionRequests(selectedCollection)
-      .then((items) => {
-        requestSequence = items
-      })
-      .catch(() => {
-        requestSequence = []
-      })
-      .finally(() => {
-        sequenceLoading = false
-      })
+      .then((items) => { requestSequence = items })
+      .catch(() => { requestSequence = [] })
+      .finally(() => { sequenceLoading = false })
   })
 
-  // Load data preview when data file changes
   $effect(() => {
     const file = dataFile.trim()
     if (!file) {
@@ -74,16 +64,12 @@
     dataPreviewLoading = true
     dataPreviewError = null
     fetchDataPreview(file)
-      .then((rows) => {
-        dataPreview = rows
-      })
+      .then((rows) => { dataPreview = rows })
       .catch((e: unknown) => {
         dataPreview = []
         dataPreviewError = e instanceof Error ? e.message : String(e)
       })
-      .finally(() => {
-        dataPreviewLoading = false
-      })
+      .finally(() => { dataPreviewLoading = false })
   })
 
   const dataPreviewColumns = $derived(
@@ -124,146 +110,121 @@
     <p class="subtitle">API Collection Runner</p>
   </header>
 
-  <nav class="tabs">
-    <button
-      class="tab"
-      class:active={activeTab === 'functional'}
-      onclick={() => (activeTab = 'functional')}
-    >
-      Functional
-    </button>
-    <button class="tab" disabled title="Coming soon">
-      Performance
-    </button>
-  </nav>
-
-  {#if activeTab === 'functional'}
-    <div class="form">
-      <label class="field">
-        <span>Collection</span>
-        {#if collections.length > 0}
-          <select bind:value={selectedCollection}>
-            {#each collections as file}
-              <option value={file}>{file}</option>
-            {/each}
-          </select>
-        {:else}
-          <p class="hint">No .yaml files found in the current directory.</p>
-        {/if}
-      </label>
-
-      {#if sequenceLoading}
-        <p class="hint">Loading requests…</p>
-      {:else if requestSequence.length > 0}
-        <ol class="sequence-list">
-          {#each requestSequence as item, i}
-            <li class="sequence-item">
-              <span class="seq-num">{i + 1}.</span>
-              <span
-                class="seq-method"
-                style:color={methodColors[item.method] ?? '#aaa'}
-              >{item.method}</span>
-              <span class="seq-name">{item.name}</span>
-            </li>
+  <div class="form">
+    <label class="field">
+      <span>Collection</span>
+      {#if collections.length > 0}
+        <select bind:value={selectedCollection}>
+          {#each collections as file}
+            <option value={file}>{file}</option>
           {/each}
-        </ol>
+        </select>
+      {:else}
+        <p class="hint">No .yaml files found in the current directory.</p>
       {/if}
+    </label>
 
-      <label class="field">
-        <span>Data file <em>(optional)</em></span>
-        <input
-          type="text"
-          placeholder="path/to/data.csv or data.json"
-          bind:value={dataFile}
-        />
-      </label>
+    {#if sequenceLoading}
+      <p class="hint">Loading requests…</p>
+    {:else if requestSequence.length > 0}
+      <ol class="sequence-list">
+        {#each requestSequence as item, i}
+          <li class="sequence-item">
+            <span class="seq-num">{i + 1}.</span>
+            <span class="seq-method" style:color={methodColors[item.method] ?? '#aaa'}
+              >{item.method}</span
+            >
+            <span class="seq-name">{item.name}</span>
+          </li>
+        {/each}
+      </ol>
+    {/if}
 
-      <label class="field">
-        <span>Iterations <em>(optional)</em></span>
-        <input
-          type="number"
-          min="1"
-          placeholder={dataFile.trim() ? 'All rows' : 'Run once'}
-          bind:value={iterations}
-        />
-      </label>
+    <label class="field">
+      <span>Data file <em>(optional)</em></span>
+      <input
+        type="text"
+        placeholder="path/to/data.csv or data.json"
+        bind:value={dataFile}
+      />
+    </label>
 
-      {#if dataFile.trim()}
-        {#if dataPreviewLoading}
-          <p class="hint">Loading preview…</p>
-        {:else if dataPreviewError}
-          <p class="hint error">{dataPreviewError}</p>
-        {:else if dataPreview.length > 0}
-          <div class="data-preview">
-            <p class="preview-title">Data preview ({dataPreview.length} row{dataPreview.length === 1 ? '' : 's'})</p>
-            <div class="preview-table-wrap">
-              <table class="preview-table">
-                <thead>
+    <label class="field">
+      <span>Iterations <em>(optional)</em></span>
+      <input
+        type="number"
+        min="1"
+        placeholder={dataFile.trim() ? 'All rows' : 'Run once'}
+        bind:value={iterations}
+      />
+    </label>
+
+    {#if dataFile.trim()}
+      {#if dataPreviewLoading}
+        <p class="hint">Loading preview…</p>
+      {:else if dataPreviewError}
+        <p class="hint error">{dataPreviewError}</p>
+      {:else if dataPreview.length > 0}
+        <div class="data-preview">
+          <p class="preview-title">
+            Data preview ({dataPreview.length} row{dataPreview.length === 1 ? '' : 's'})
+          </p>
+          <div class="preview-table-wrap">
+            <table class="preview-table">
+              <thead>
+                <tr>
+                  {#each dataPreviewColumns as col}
+                    <th>{col}</th>
+                  {/each}
+                </tr>
+              </thead>
+              <tbody>
+                {#each dataPreview as row}
                   <tr>
                     {#each dataPreviewColumns as col}
-                      <th>{col}</th>
+                      <td>{row[col] ?? ''}</td>
                     {/each}
                   </tr>
-                </thead>
-                <tbody>
-                  {#each dataPreview as row}
-                    <tr>
-                      {#each dataPreviewColumns as col}
-                        <td>{row[col] ?? ''}</td>
-                      {/each}
-                    </tr>
-                  {/each}
-                </tbody>
-              </table>
-            </div>
+                {/each}
+              </tbody>
+            </table>
           </div>
-        {/if}
+        </div>
       {/if}
+    {/if}
 
-      <label class="field">
-        <span>Concurrency</span>
-        <input type="number" min="1" max="50" bind:value={concurrency} />
-      </label>
+    <label class="field">
+      <span>Concurrency</span>
+      <input type="number" min="1" max="50" bind:value={concurrency} />
+    </label>
 
-      <label class="field">
-        <span>Delay between requests <em>(ms)</em></span>
-        <input type="number" min="0" bind:value={delayRequests} />
-      </label>
+    <label class="field">
+      <span>Delay between requests <em>(ms)</em></span>
+      <input type="number" min="0" bind:value={delayRequests} />
+    </label>
 
-      <label class="field">
-        <span>Delay between iterations <em>(ms)</em></span>
-        <input type="number" min="0" bind:value={delayIterations} />
-      </label>
+    <label class="field">
+      <span>Delay between iterations <em>(ms)</em></span>
+      <input type="number" min="0" bind:value={delayIterations} />
+    </label>
 
-      <label class="field checkbox">
-        <input type="checkbox" bind:checked={failFast} />
-        <span>Fail fast</span>
-      </label>
+    <label class="field checkbox">
+      <input type="checkbox" bind:checked={failFast} />
+      <span>Fail fast</span>
+    </label>
 
-      <button
-        class="run-button"
-        onclick={handleRun}
-        disabled={running || !selectedCollection}
-      >
-        {running ? 'Running…' : 'Run'}
-      </button>
+    <button class="run-button" onclick={handleRun} disabled={running || !selectedCollection}>
+      {running ? 'Running…' : 'Run'}
+    </button>
 
-      <button
-        class="import-button"
-        onclick={() => (showImportModal = true)}
-        disabled={running}
-      >
-        + Import
-      </button>
+    <button class="import-button" onclick={() => (showImportModal = true)} disabled={running}>
+      + Import
+    </button>
 
-      {#if showImportModal}
-        <ImportModal
-          onSaved={handleImportSaved}
-          onClose={() => (showImportModal = false)}
-        />
-      {/if}
-    </div>
-  {/if}
+    {#if showImportModal}
+      <ImportModal onSaved={handleImportSaved} onClose={() => (showImportModal = false)} />
+    {/if}
+  </div>
 </aside>
 
 <style>
@@ -294,40 +255,6 @@
     margin: 4px 0 0;
     font-size: 0.75rem;
     color: #888;
-  }
-
-  .tabs {
-    display: flex;
-    gap: 8px;
-    border-bottom: 1px solid #2a2a4a;
-    padding-bottom: 12px;
-  }
-
-  .tab {
-    background: none;
-    border: none;
-    color: #aaa;
-    cursor: pointer;
-    padding: 6px 12px;
-    border-radius: 4px;
-    font-size: 0.875rem;
-    transition: background 0.15s;
-  }
-
-  .tab:hover:not(:disabled) {
-    background: #2a2a4a;
-    color: #fff;
-  }
-
-  .tab.active {
-    background: #2a2a4a;
-    color: #ff6b35;
-    font-weight: 600;
-  }
-
-  .tab:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
   }
 
   .form {
@@ -512,4 +439,3 @@
     cursor: not-allowed;
   }
 </style>
-

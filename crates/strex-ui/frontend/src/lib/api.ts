@@ -1,4 +1,4 @@
-import type { RequestSequenceItem, RunSummary } from './types'
+import type { PerfRunSummary, RequestSequenceItem, RunSummary } from './types'
 
 export async function fetchCollections(): Promise<string[]> {
   const res = await fetch('/api/collections')
@@ -37,6 +37,28 @@ export async function fetchHistory(): Promise<RunSummary[]> {
 export async function loadHistoryRun(id: string): Promise<unknown> {
   const res = await fetch(`/api/history/${encodeURIComponent(id)}`)
   if (!res.ok) throw new Error(`Failed to load history run: ${res.status}`)
+  return res.json()
+}
+
+export async function savePerfHistory(payload: object): Promise<{ id: string }> {
+  const res = await fetch('/api/perf-history', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  if (!res.ok) throw new Error(`Failed to save perf history: ${res.status}`)
+  return res.json()
+}
+
+export async function listPerfHistory(): Promise<PerfRunSummary[]> {
+  const res = await fetch('/api/perf-history')
+  if (!res.ok) throw new Error(`Failed to fetch perf history: ${res.status}`)
+  return res.json()
+}
+
+export async function getPerfHistory(id: string): Promise<unknown> {
+  const res = await fetch(`/api/perf-history/${encodeURIComponent(id)}`)
+  if (!res.ok) throw new Error(`Failed to load perf history: ${res.status}`)
   return res.json()
 }
 
