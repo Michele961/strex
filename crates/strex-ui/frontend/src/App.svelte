@@ -5,8 +5,9 @@
   import ConfigPanel from './components/ConfigPanel.svelte'
   import ResultsPanel from './components/ResultsPanel.svelte'
   import HistoryPanel from './components/HistoryPanel.svelte'
-  import PerfPanel from './components/PerfPanel.svelte'
+  import PerfView from './components/PerfView.svelte'
 
+  // ── Tab state ─────────────────────────────────────────────────────────────
   let activeTab = $state<'functional' | 'performance'>('functional')
 
   // ── Functional run state ──────────────────────────────────────────────────
@@ -83,13 +84,12 @@
           running = false
         }
       },
-      () => {
-        running = false
-      }
+      () => { running = false }
     )
   }
 
   // ── Performance run state ─────────────────────────────────────────────────
+  let perfWs = $state<WebSocket | null>(null)
   let perfRunning = $state(false)
   let perfStarted = $state<{ vus: number; duration_secs: number; load_profile: string } | null>(null)
   let perfTick = $state<{
@@ -116,12 +116,13 @@
     perfError = null
     perfRunning = true
 
-    connectPerf(
+    perfWs = connectPerf(
       config,
       (event: PerfWsEvent) => {
         if (event.type === 'Started') {
           perfStarted = { vus: event.vus, duration_secs: event.duration_secs, load_profile: event.load_profile }
         } else if (event.type === 'Tick') {
+          // Replace with a new object so $effect in PerfView fires
           perfTick = {
             elapsed_secs: event.elapsed_secs,
             total_iterations: event.total_iterations,
@@ -137,38 +138,59 @@
           perfThresholdResults = event.threshold_results
           perfPassed = event.passed
           perfRunning = false
+          perfWs = null
         } else if (event.type === 'error') {
           perfError = event.message
           perfRunning = false
+          perfWs = null
         }
       },
-      () => {
-        perfRunning = false
-      }
+      () => { perfRunning = false; perfWs = null }
     )
+  }
+
+  function handlePerfStop() {
+    perfWs?.close()
+    perfWs = null
+    perfRunning = false
   }
 </script>
 
 <div class="app">
-  <ConfigPanel
-    onRun={handleRun}
-    onPerfRun={handlePerfRun}
-    {running}
-    {perfRunning}
-    {activeTab}
-    onTabChange={(tab) => (activeTab = tab)}
-  />
+  <ConfigPanel onRun={handleRun} {running} />
+
   <div class="main-column">
+    <nav class="tab-bar">
+      <button
+        class="tab-btn"
+        class:active={activeTab === 'functional'}
+        onclick={() => (activeTab = 'functional')}
+      >
+        Functional
+      </button>
+      <button
+        class="tab-btn"
+        class:active={activeTab === 'performance'}
+        onclick={() => (activeTab = 'performance')}
+      >
+        Performance
+      </button>
+    </nav>
+
     {#if activeTab === 'performance'}
-      <PerfPanel
-        running={perfRunning}
-        started={perfStarted}
-        tick={perfTick}
-        finalMetrics={perfFinalMetrics}
-        thresholdResults={perfThresholdResults}
-        passed={perfPassed}
-        error={perfError}
-      />
+      <div class="perf-area">
+        <PerfView
+          onRun={handlePerfRun}
+          onStop={handlePerfStop}
+          running={perfRunning}
+          started={perfStarted}
+          tick={perfTick}
+          finalMetrics={perfFinalMetrics}
+          thresholdResults={perfThresholdResults}
+          passed={perfPassed}
+          error={perfError}
+        />
+      </div>
     {:else}
       <ResultsPanel {items} {running} {total} {summary} />
       <HistoryPanel refresh={historyRefresh} />
@@ -198,5 +220,42 @@
     display: flex;
     flex-direction: column;
     overflow: hidden;
+  }
+
+  .tab-bar {
+    display: flex;
+    gap: 4px;
+    padding: 0 20px;
+    border-bottom: 1px solid #1e1e38;
+    background: #13132b;
+    flex-shrink: 0;
+  }
+
+  .tab-btn {
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: #888;
+    cursor: pointer;
+    padding: 12px 16px;
+    font-size: 0.875rem;
+    font-weight: 500;
+    transition: color 0.15s, border-color 0.15s;
+    margin-bottom: -1px;
+  }
+
+  .tab-btn:hover {
+    color: #ccc;
+  }
+
+  .tab-btn.active {
+    color: #e0e0e0;
+    border-bottom-color: #ff6b35;
+    font-weight: 600;
+  }
+
+  .perf-area {
+    flex: 1;
+    overflow-y: auto;
   }
 </style>

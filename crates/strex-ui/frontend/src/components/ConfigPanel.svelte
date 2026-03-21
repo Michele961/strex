@@ -1,18 +1,14 @@
 <script lang="ts">
   import { fetchCollections, fetchCollectionRequests, fetchDataPreview } from '../lib/api'
   import ImportModal from './ImportModal.svelte'
-  import type { RunConfig, PerfRunConfig, RequestSequenceItem } from '../lib/types'
+  import type { RunConfig, RequestSequenceItem } from '../lib/types'
 
   interface Props {
     onRun: (config: RunConfig) => void
-    onPerfRun: (config: PerfRunConfig) => void
     running: boolean
-    perfRunning: boolean
-    activeTab: 'functional' | 'performance'
-    onTabChange: (tab: 'functional' | 'performance') => void
   }
 
-  let { onRun, onPerfRun, running, perfRunning, activeTab, onTabChange }: Props = $props()
+  let { onRun, running }: Props = $props()
 
   let collections = $state<string[]>([])
   let selectedCollection = $state('')
@@ -29,14 +25,6 @@
   let dataPreviewLoading = $state(false)
   let showImportModal = $state(false)
 
-  // ── Performance tab state ──────────────────────────────────────────────────
-  let perfVus = $state(10)
-  let perfDuration = $state(30)
-  let perfLoadProfile = $state<'fixed' | 'ramp_up'>('fixed')
-  let perfInitialVus = $state(1)
-  let perfThresholdsRaw = $state('')
-  let perfDataFile = $state('')
-
   const methodColors: Record<string, string> = {
     GET: '#61affe',
     POST: '#49cc90',
@@ -45,7 +33,6 @@
     DELETE: '#f93e3e',
   }
 
-  // Load collection list on mount
   $effect(() => {
     fetchCollections()
       .then((files) => {
@@ -55,7 +42,6 @@
       .catch((e: unknown) => console.error('Failed to load collections:', e))
   })
 
-  // Load request sequence when selected collection changes
   $effect(() => {
     if (!selectedCollection) {
       requestSequence = []
@@ -63,18 +49,11 @@
     }
     sequenceLoading = true
     fetchCollectionRequests(selectedCollection)
-      .then((items) => {
-        requestSequence = items
-      })
-      .catch(() => {
-        requestSequence = []
-      })
-      .finally(() => {
-        sequenceLoading = false
-      })
+      .then((items) => { requestSequence = items })
+      .catch(() => { requestSequence = [] })
+      .finally(() => { sequenceLoading = false })
   })
 
-  // Load data preview when data file changes
   $effect(() => {
     const file = dataFile.trim()
     if (!file) {
@@ -85,16 +64,12 @@
     dataPreviewLoading = true
     dataPreviewError = null
     fetchDataPreview(file)
-      .then((rows) => {
-        dataPreview = rows
-      })
+      .then((rows) => { dataPreview = rows })
       .catch((e: unknown) => {
         dataPreview = []
         dataPreviewError = e instanceof Error ? e.message : String(e)
       })
-      .finally(() => {
-        dataPreviewLoading = false
-      })
+      .finally(() => { dataPreviewLoading = false })
   })
 
   const dataPreviewColumns = $derived(
@@ -127,23 +102,6 @@
       })
       .catch((e: unknown) => console.error('Failed to refresh collections:', e))
   }
-
-  function handlePerfRun() {
-    if (!selectedCollection) return
-    const thresholds = perfThresholdsRaw
-      .split('\n')
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0)
-    onPerfRun({
-      collection: selectedCollection,
-      vus: Number(perfVus),
-      duration_secs: Number(perfDuration),
-      load_profile: perfLoadProfile,
-      initial_vus: perfLoadProfile === 'ramp_up' ? Number(perfInitialVus) : undefined,
-      thresholds,
-      data: perfDataFile.trim() || undefined,
-    })
-  }
 </script>
 
 <aside class="config-panel">
@@ -152,216 +110,121 @@
     <p class="subtitle">API Collection Runner</p>
   </header>
 
-  <nav class="tabs">
-    <button
-      class="tab"
-      class:active={activeTab === 'functional'}
-      onclick={() => onTabChange('functional')}
-    >
-      Functional
-    </button>
-    <button
-      class="tab"
-      class:active={activeTab === 'performance'}
-      onclick={() => onTabChange('performance')}
-    >
-      Performance
-    </button>
-  </nav>
-
-  {#if activeTab === 'performance'}
-    <div class="form">
-      <label class="field">
-        <span>Collection</span>
-        {#if collections.length > 0}
-          <select bind:value={selectedCollection}>
-            {#each collections as file}
-              <option value={file}>{file}</option>
-            {/each}
-          </select>
-        {:else}
-          <p class="hint">No .yaml files found in the current directory.</p>
-        {/if}
-      </label>
-
-      <label class="field">
-        <span>Virtual Users (VUs)</span>
-        <input type="number" min="1" max="500" bind:value={perfVus} />
-      </label>
-
-      <label class="field">
-        <span>Duration <em>(seconds)</em></span>
-        <input type="number" min="1" bind:value={perfDuration} />
-      </label>
-
-      <label class="field">
-        <span>Load Profile</span>
-        <select bind:value={perfLoadProfile}>
-          <option value="fixed">Fixed</option>
-          <option value="ramp_up">Ramp-up</option>
-        </select>
-      </label>
-
-      {#if perfLoadProfile === 'ramp_up'}
-        <label class="field">
-          <span>Initial VUs</span>
-          <input type="number" min="1" bind:value={perfInitialVus} />
-        </label>
-      {/if}
-
-      <label class="field">
-        <span>Thresholds <em>(one per line, e.g. p95_response_ms:lt:500)</em></span>
-        <textarea
-          rows="3"
-          placeholder="p95_response_ms:lt:500&#10;error_rate_pct:lt:1"
-          bind:value={perfThresholdsRaw}
-        ></textarea>
-      </label>
-
-      <label class="field">
-        <span>Data file <em>(optional)</em></span>
-        <input
-          type="text"
-          placeholder="path/to/data.csv or data.json"
-          bind:value={perfDataFile}
-        />
-      </label>
-
-      <button
-        class="run-button"
-        onclick={handlePerfRun}
-        disabled={perfRunning || !selectedCollection}
-      >
-        {perfRunning ? 'Running…' : 'Run Performance Test'}
-      </button>
-    </div>
-  {:else if activeTab === 'functional'}
-    <div class="form">
-      <label class="field">
-        <span>Collection</span>
-        {#if collections.length > 0}
-          <select bind:value={selectedCollection}>
-            {#each collections as file}
-              <option value={file}>{file}</option>
-            {/each}
-          </select>
-        {:else}
-          <p class="hint">No .yaml files found in the current directory.</p>
-        {/if}
-      </label>
-
-      {#if sequenceLoading}
-        <p class="hint">Loading requests…</p>
-      {:else if requestSequence.length > 0}
-        <ol class="sequence-list">
-          {#each requestSequence as item, i}
-            <li class="sequence-item">
-              <span class="seq-num">{i + 1}.</span>
-              <span
-                class="seq-method"
-                style:color={methodColors[item.method] ?? '#aaa'}
-              >{item.method}</span>
-              <span class="seq-name">{item.name}</span>
-            </li>
+  <div class="form">
+    <label class="field">
+      <span>Collection</span>
+      {#if collections.length > 0}
+        <select bind:value={selectedCollection}>
+          {#each collections as file}
+            <option value={file}>{file}</option>
           {/each}
-        </ol>
+        </select>
+      {:else}
+        <p class="hint">No .yaml files found in the current directory.</p>
       {/if}
+    </label>
 
-      <label class="field">
-        <span>Data file <em>(optional)</em></span>
-        <input
-          type="text"
-          placeholder="path/to/data.csv or data.json"
-          bind:value={dataFile}
-        />
-      </label>
+    {#if sequenceLoading}
+      <p class="hint">Loading requests…</p>
+    {:else if requestSequence.length > 0}
+      <ol class="sequence-list">
+        {#each requestSequence as item, i}
+          <li class="sequence-item">
+            <span class="seq-num">{i + 1}.</span>
+            <span class="seq-method" style:color={methodColors[item.method] ?? '#aaa'}
+              >{item.method}</span
+            >
+            <span class="seq-name">{item.name}</span>
+          </li>
+        {/each}
+      </ol>
+    {/if}
 
-      <label class="field">
-        <span>Iterations <em>(optional)</em></span>
-        <input
-          type="number"
-          min="1"
-          placeholder={dataFile.trim() ? 'All rows' : 'Run once'}
-          bind:value={iterations}
-        />
-      </label>
+    <label class="field">
+      <span>Data file <em>(optional)</em></span>
+      <input
+        type="text"
+        placeholder="path/to/data.csv or data.json"
+        bind:value={dataFile}
+      />
+    </label>
 
-      {#if dataFile.trim()}
-        {#if dataPreviewLoading}
-          <p class="hint">Loading preview…</p>
-        {:else if dataPreviewError}
-          <p class="hint error">{dataPreviewError}</p>
-        {:else if dataPreview.length > 0}
-          <div class="data-preview">
-            <p class="preview-title">Data preview ({dataPreview.length} row{dataPreview.length === 1 ? '' : 's'})</p>
-            <div class="preview-table-wrap">
-              <table class="preview-table">
-                <thead>
+    <label class="field">
+      <span>Iterations <em>(optional)</em></span>
+      <input
+        type="number"
+        min="1"
+        placeholder={dataFile.trim() ? 'All rows' : 'Run once'}
+        bind:value={iterations}
+      />
+    </label>
+
+    {#if dataFile.trim()}
+      {#if dataPreviewLoading}
+        <p class="hint">Loading preview…</p>
+      {:else if dataPreviewError}
+        <p class="hint error">{dataPreviewError}</p>
+      {:else if dataPreview.length > 0}
+        <div class="data-preview">
+          <p class="preview-title">
+            Data preview ({dataPreview.length} row{dataPreview.length === 1 ? '' : 's'})
+          </p>
+          <div class="preview-table-wrap">
+            <table class="preview-table">
+              <thead>
+                <tr>
+                  {#each dataPreviewColumns as col}
+                    <th>{col}</th>
+                  {/each}
+                </tr>
+              </thead>
+              <tbody>
+                {#each dataPreview as row}
                   <tr>
                     {#each dataPreviewColumns as col}
-                      <th>{col}</th>
+                      <td>{row[col] ?? ''}</td>
                     {/each}
                   </tr>
-                </thead>
-                <tbody>
-                  {#each dataPreview as row}
-                    <tr>
-                      {#each dataPreviewColumns as col}
-                        <td>{row[col] ?? ''}</td>
-                      {/each}
-                    </tr>
-                  {/each}
-                </tbody>
-              </table>
-            </div>
+                {/each}
+              </tbody>
+            </table>
           </div>
-        {/if}
+        </div>
       {/if}
+    {/if}
 
-      <label class="field">
-        <span>Concurrency</span>
-        <input type="number" min="1" max="50" bind:value={concurrency} />
-      </label>
+    <label class="field">
+      <span>Concurrency</span>
+      <input type="number" min="1" max="50" bind:value={concurrency} />
+    </label>
 
-      <label class="field">
-        <span>Delay between requests <em>(ms)</em></span>
-        <input type="number" min="0" bind:value={delayRequests} />
-      </label>
+    <label class="field">
+      <span>Delay between requests <em>(ms)</em></span>
+      <input type="number" min="0" bind:value={delayRequests} />
+    </label>
 
-      <label class="field">
-        <span>Delay between iterations <em>(ms)</em></span>
-        <input type="number" min="0" bind:value={delayIterations} />
-      </label>
+    <label class="field">
+      <span>Delay between iterations <em>(ms)</em></span>
+      <input type="number" min="0" bind:value={delayIterations} />
+    </label>
 
-      <label class="field checkbox">
-        <input type="checkbox" bind:checked={failFast} />
-        <span>Fail fast</span>
-      </label>
+    <label class="field checkbox">
+      <input type="checkbox" bind:checked={failFast} />
+      <span>Fail fast</span>
+    </label>
 
-      <button
-        class="run-button"
-        onclick={handleRun}
-        disabled={running || !selectedCollection}
-      >
-        {running ? 'Running…' : 'Run'}
-      </button>
+    <button class="run-button" onclick={handleRun} disabled={running || !selectedCollection}>
+      {running ? 'Running…' : 'Run'}
+    </button>
 
-      <button
-        class="import-button"
-        onclick={() => (showImportModal = true)}
-        disabled={running}
-      >
-        + Import
-      </button>
+    <button class="import-button" onclick={() => (showImportModal = true)} disabled={running}>
+      + Import
+    </button>
 
-      {#if showImportModal}
-        <ImportModal
-          onSaved={handleImportSaved}
-          onClose={() => (showImportModal = false)}
-        />
-      {/if}
-    </div>
-  {/if}
+    {#if showImportModal}
+      <ImportModal onSaved={handleImportSaved} onClose={() => (showImportModal = false)} />
+    {/if}
+  </div>
 </aside>
 
 <style>
@@ -394,40 +257,6 @@
     color: #888;
   }
 
-  .tabs {
-    display: flex;
-    gap: 8px;
-    border-bottom: 1px solid #2a2a4a;
-    padding-bottom: 12px;
-  }
-
-  .tab {
-    background: none;
-    border: none;
-    color: #aaa;
-    cursor: pointer;
-    padding: 6px 12px;
-    border-radius: 4px;
-    font-size: 0.875rem;
-    transition: background 0.15s;
-  }
-
-  .tab:hover:not(:disabled) {
-    background: #2a2a4a;
-    color: #fff;
-  }
-
-  .tab.active {
-    background: #2a2a4a;
-    color: #ff6b35;
-    font-weight: 600;
-  }
-
-  .tab:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-  }
-
   .form {
     display: flex;
     flex-direction: column;
@@ -452,8 +281,7 @@
 
   .field select,
   .field input[type='text'],
-  .field input[type='number'],
-  .field textarea {
+  .field input[type='number'] {
     background: #0f0f23;
     border: 1px solid #333;
     border-radius: 4px;
@@ -462,7 +290,6 @@
     font-size: 0.875rem;
     width: 100%;
     box-sizing: border-box;
-    resize: vertical;
   }
 
   .field.checkbox {
@@ -612,4 +439,3 @@
     cursor: not-allowed;
   }
 </style>
-
